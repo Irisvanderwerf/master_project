@@ -10,4 +10,5 @@
 .vscode/
 
 # ignore data
-data/
+mnist_data/
+
