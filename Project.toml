@@ -1,0 +1,13 @@
+name = "master_project"
+uuid = "bfdc22d4-bde7-410c-964a-6da9fcb0d6cf"
+authors = ["Irisvanderwerf <i.v.d.werf@student.tue.nl> and contributors"]
+version = "1.0.0-DEV"
+
+[compat]
+julia = "1"
+
+[extras]
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+
+[targets]
+test = ["Test"]
