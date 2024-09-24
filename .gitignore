@@ -4,3 +4,10 @@
 /Manifest.toml
 /docs/Manifest.toml
 /docs/build/
+
+
+# ignore .vscode
+.vscode/
+
+# ignore data
+data/
