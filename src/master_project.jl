@@ -22,6 +22,7 @@ export time_derivative_stochastic_interpolant
 
 # Add the CNN
 export build_NN
+export UNet
 
 # Add fucntions for training
 export loss_fn
