@@ -4,7 +4,7 @@ function generate_digit(velocity_cnn, ps, st, initial_gaussian_image, num_steps,
     images = initial_gaussian_image
     
     t_range = LinRange(0, 1, num_steps)
-    dt = t_range[2] - t_range[1]
+    dt = Float32(t_range[2] - t_range[1])
 
     # Simulate forward evolution over time from t = 0 to t = 1
     for i in 1:num_steps-1
@@ -24,7 +24,7 @@ function generate_digit(velocity_cnn, ps, st, initial_gaussian_image, num_steps,
         images = images .+ dt .* velocity
     end
     # Maybe add clamping 
-    return images #clamp.(images,0.0,1.0)
+    return clamp.(images,0.0,1.0)
 end
 
 ### Plot multiple generated images ###

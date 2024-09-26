@@ -18,87 +18,129 @@ end
 # This function transforms a time variable into a higher-dimensional space using sine and cosine functions at different frequencies. 
 # This will help the model to learn the temporal dependencies. 
 
-# Define the U-Net building block with Conv and ReLU activation followed by batch normalization
-function ConvBlock(in_channels, out_channels)
-    return Chain(
-        Conv((3, 3), in_channels => out_channels, leakyrelu, pad=(1,1)),
-        Conv((3, 3), out_channels => out_channels, leakyrelu, pad=(1,1)),
-        MaxPool((2, 2))
-    )
+
+function ResidualBlock(in_channels, out_channels)
+    return @compact(
+        main_conv = Chain(
+            Conv((3, 3), in_channels => out_channels, leakyrelu, pad=(1,1)),
+            Lux.InstanceNorm(out_channels),
+            Conv((3, 3), out_channels => out_channels, leakyrelu, pad=(1,1))
+        ),
+        skip_conv = Conv((1, 1), in_channels => out_channels; pad=0),
+    ) do x
+        x_skip = skip_conv(x)
+        x = main_conv(x)
+        @return  x .+ x_skip
+    end
 end
+
+# Define the U-Net building block with Conv and ReLU activation followed by batch normalization
+function DownBlock(in_channels, out_channels)
+    return @compact(
+        res_block = ResidualBlock(in_channels, out_channels),
+        down_conv = Conv((4, 4), out_channels => out_channels; pad=1, stride=(2, 2)),
+    ) do x
+        x = res_block(x)
+        @return down_conv(x)
+    end
+    
+    # return Chain(
+    #     Conv((3, 3), in_channels => out_channels, leakyrelu, pad=(1,1)),
+    #     Conv((3, 3), out_channels => out_channels, leakyrelu, pad=(1,1)),
+    #     MaxPool((2, 2))
+    # )
+end
+
+
+
 
 # Define the up-sampling block
 function UpBlock(in_channels, out_channels)
-    return Chain(
-        Upsample((2, 2)),  # Upsampling to double the spatial dimensions
-        Conv((3, 3), in_channels => out_channels, leakyrelu, pad=(1, 1)),
-        Conv((3, 3), out_channels => out_channels, leakyrelu, pad=(1, 1)),
-    )
+    return @compact(
+        res_block = ResidualBlock(in_channels, out_channels),
+        up_conv = ConvTranspose((4, 4), out_channels => out_channels; pad=1, stride=(2, 2)),
+    ) do x
+        x = res_block(x)
+        @return up_conv(x)
+    end
+    # return Chain(
+    #     Upsample((2, 2)),  # Upsampling to double the spatial dimensions
+    #     Conv((3, 3), in_channels => out_channels, leakyrelu, pad=(1, 1)),
+    #     Conv((3, 3), out_channels => out_channels, leakyrelu, pad=(1, 1)),
+    # )
 end
 
 # Define the U-Net architecture
-function UNet()
+function UNet(
+    in_channels = 1,
+    out_channels = 1,
+    hidden_channels = [16, 32, 64],
+)
     return @compact(
         # We start with 64 input channels
         # Down-sampling path
-        down1 = ConvBlock(64, 128),  # Start with 2 input channels for I_sample and t_sample
-        down2 = ConvBlock(128, 256),
-        down3 = ConvBlock(256, 512),
+        down1 = DownBlock(in_channels, hidden_channels[1]),  # Start with 2 input channels for I_sample and t_sample
+        down2 = DownBlock(hidden_channels[1], hidden_channels[2]),
+        down3 = DownBlock(hidden_channels[2], hidden_channels[3]),
         
         bottom = Chain(
-            Conv((3, 3), 512 => 1024, leakyrelu, pad=(1, 1)),
-            Conv((3, 3), 1024 => 1024, leakyrelu, pad=(1, 1)),
+            Conv((3, 3), hidden_channels[3] => 2*hidden_channels[3], leakyrelu, pad=(1, 1)),
+            Conv((3, 3), 2*hidden_channels[3] => hidden_channels[3], leakyrelu, pad=(1, 1)),
         ),
 
         # Up-sampling path - channel reduction 
-        up3 = UpBlock(1536, 512),   
-        up2 = UpBlock(768, 256),
-        up1 = UpBlock(384, 128),
+        up3 = UpBlock(2*hidden_channels[3], hidden_channels[2]),   
+        up2 = UpBlock(2*hidden_channels[2], hidden_channels[1]),
+        up1 = UpBlock(2*hidden_channels[1], hidden_channels[1]),
         
-        final_conv = Conv((1, 1), 128 => 1, pad=(2,2))  # Output layer with one channel
+        final_conv = Conv((1, 1), hidden_channels[1] => out_channels, pad=(2,2), use_bias=false)  # Output layer with one channel
     ) do x
         x_down1 = down1(x)
-        println("after down1 shape: ", size(x_down1))
+        # println("after down1 shape: ", size(x_down1))
         x_down2 = down2(x_down1)
-        println("after down2 shape: ", size(x_down2))
+        # println("after down2 shape: ", size(x_down2))
         x_down3 = down3(x_down2)
-        println("after down3 shape: ", size(x_down3))
-    
+        # println("after down3 shape: ", size(x_down3))
+
+
         x = bottom(x_down3)  
-        println("After bottom shape: ", size(x))
+        # println("After bottom shape: ", size(x))
         
         # Up-sample with skip connections
         x = cat(x, x_down3, dims=3)
-        println("After concatenating shape: ", size(x))
+        # println("After concatenating shape: ", size(x))
         x = up3(x)
-        println("After up3 shape: ", size(x))
+        # println("After up3 shape: ", size(x))
 
         target_size = size(x,1)
         crop_start = 1  # Starting row index
         crop_end = target_size  # Ending row index (6 in this case)
         x = cat(x, view(x_down2, crop_start:crop_end, crop_start:crop_end, :, :), dims=3)
-        println("After concatenating shape: ", size(x))
+        # println("After concatenating shape: ", size(x))
         x = up2(x)
-        println("After up2 shape: ", size(x))
+        # println("After up2 shape: ", size(x))
 
         target_size = size(x,1)
         crop_start = 1  # Starting row index
         crop_end = target_size  # Ending row index (6 in this case)
         x = cat(x, view(x_down1, crop_start:crop_end, crop_start:crop_end, :, :), dims=3)
-        println("After concatenating shape: ", size(x))
+        # println("After concatenating shape: ", size(x))
         x = up1(x)
-        println("After up1 shape: ", size(x))
+        # println("After up1 shape: ", size(x))
         
         @return final_conv(x)  # Final 1x1 convolution to reduce channels - Output shape: (28, 28, 1, 32)
     end
 end
 
 # Define the full U-Net with time embedding
-function build_full_unet()
+function build_full_unet(
+    embedding_dim = 8,
+    hidden_channels = [16, 32, 64],
+)
     return @compact(
-        conv_in = Conv((3, 3), 1 => 32, leakyrelu, pad=(1,1)),
-        u_net = UNet(),
-        t_embedding = t -> sinusoidal_embedding(t, 1.0f0, 1000.0f0, 32)
+        conv_in = Conv((3, 3), 1 => embedding_dim, leakyrelu, pad=(1,1)),
+        u_net = UNet(2 * embedding_dim, 1, hidden_channels),
+        t_embedding = t -> sinusoidal_embedding(t, 1.0f0, 1000.0f0, embedding_dim)
     ) do x
         # Extract the input image and time
         I_sample, t_sample = x
@@ -112,7 +154,7 @@ function build_full_unet()
         # Concatenate the time t along the channel dimension
         x = cat(x, t_sample_reshaped, dims=3) # shape: (28, 28, 64, 32)
         # Pass through the convolutional layers
-        return u_net(x)
+        @return u_net(x)
     end
 end
 

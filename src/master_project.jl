@@ -23,7 +23,8 @@ export time_derivative_stochastic_interpolant
 
 # Add functions for u-net. 
 export sinusoidal_embedding
-export ConvBlock
+export ResidualBlock
+export DownBlock
 export UpBlock
 export UNet
 export build_full_unet

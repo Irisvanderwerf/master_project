@@ -12,9 +12,9 @@ function get_minibatch(images, batch_size, batch_index)
 end
 
 function loss_fn(velocity, dI_dt_sample)
-    println("Inside loss_fn:")
-    println("Velocity shape: ", size(velocity))
-    println("dI_dt_sample shape: ", size(dI_dt_sample))
+    # println("Inside loss_fn:")
+    # println("Velocity shape: ", size(velocity))
+    # println("dI_dt_sample shape: ", size(dI_dt_sample))
     # Compute the loss
     loss = velocity .^ 2 - 2 .* (dI_dt_sample .* velocity)
 
@@ -52,11 +52,11 @@ function train!(velocity_cnn, ps, st, opt, num_epochs, batch_size, train_gaussia
                 p -> loss_fn_closure(p), ps
             ); 
 
-            println("structure of pb_f: ", typeof(pb_f))
+            # println("structure of pb_f: ", typeof(pb_f))
             epoch_loss += loss
 
             gs = pb_f((one(loss), nothing))[1];
-            println("Gradient norm: ", norm(gs))
+            # println("Gradient norm: ", norm(gs))
             opt, ps = Optimisers.update!(opt, ps, gs)
 
         end
