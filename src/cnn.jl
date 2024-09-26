@@ -1,14 +1,7 @@
 using Lux
 
 
-function sinusoidal_embedding(
-    x, 
-    min_freq::AbstractFloat, 
-    max_freq::AbstractFloat,
-    embedding_dims::Int,
-    dev=gpu_device()
-)
-
+function sinusoidal_embedding(x, min_freq::AbstractFloat, max_freq::AbstractFloat, embedding_dims::Int, dev=gpu_device())
     if length(size(x)) != 4
         x = reshape(x, (1, 1, 1, size(x)[end]))
         # throw(DimensionMismatch("Input shape must be (1, 1, 1, batch)"))

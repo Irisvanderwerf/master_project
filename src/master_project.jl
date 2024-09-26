@@ -3,9 +3,10 @@ module master_project
 # Write your package code here.
 include("data.jl")
 include("stochastic_interpolant.jl")
-include("cnn.jl")
+# include("cnn.jl")
 include("train.jl")
 include("generate_digit.jl")
+include("u-net.jl")
 
 # Add functions for data 
 export reshape_mnist_data
@@ -20,9 +21,15 @@ export stochastic_interpolant
 export visualize_interpolation
 export time_derivative_stochastic_interpolant
 
-# Add the CNN
-export build_NN
+# Add functions for u-net. 
+export sinusoidal_embedding
+export ConvBlock
+export UpBlock
 export UNet
+export build_full_unet
+
+# # Add the CNN
+# export build_NN
 
 # Add fucntions for training
 export loss_fn
