@@ -18,7 +18,6 @@ end
 # This function transforms a time variable into a higher-dimensional space using sine and cosine functions at different frequencies. 
 # This will help the model to learn the temporal dependencies. 
 
-
 function ResidualBlock(in_channels, out_channels)
     return @compact(
         main_conv = Chain(
@@ -50,9 +49,6 @@ function DownBlock(in_channels, out_channels)
     #     MaxPool((2, 2))
     # )
 end
-
-
-
 
 # Define the up-sampling block
 function UpBlock(in_channels, out_channels)
@@ -157,25 +153,3 @@ function build_full_unet(
         @return u_net(x)
     end
 end
-
-# using ComponentArrays
-
-# # Define input parameters
-# batch_size = 32
-# img_size = (28, 28)  # Size of MNIST images
-# # Create a random input image tensor of shape (28, 28, 1, batch_size)
-# I_sample = rand(Float32, img_size[1], img_size[2], 1, batch_size)
-# # Create a random time sample tensor of shape (1, 1, 1, batch_size)
-# t_sample = rand(Float32, 1, 1, 1, batch_size)
-
-# velocity_cnn = build_full_unet()
-
-# ### Initialize network parameters and state ###
-# ps, st = Lux.setup(Random.default_rng(), velocity_cnn)
-# ps = ComponentArray(ps)
-# println("The number of parameters of the CNN: ", length(ps))
-
-# # Forward pass through the network with example inputs
-# output, st = velocity_cnn((I_sample, t_sample), ps, st)
-# # Print the output shape to verify
-# println("Output shape: ", size(output))  

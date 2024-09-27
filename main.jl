@@ -15,10 +15,10 @@ train_images = load_mnist_data("mnist_data/train-images.idx3-ubyte", 60000, 28, 
 train_labels = load_mnist_labels("mnist_data/train-labels.idx1-ubyte", 60000);
 plot_images(train_images, 9);
 
-# Filter images for the digit '5'
-digit = 3;
-num_samples = 1000;
-train_images_filtered = filter_train_images_by_digit(train_images, train_labels, digit, num_samples);
+# Filter images for the digit or take everything
+digit = nothing;
+num_samples = 9000;
+train_images_filtered = select_mnist_images(train_images, train_labels, digit, num_samples); 
 # standardize the filtered mnist images --> mean 0 and stv 1.
 train_images_filtered = (train_images_filtered .- mean(train_images_filtered)) ./ std(train_images_filtered);
 
@@ -27,7 +27,7 @@ plot_images(train_images_filtered, 9);
 # Plot x gaussian images to check if the process went correctly 
 train_gaussian_images = generate_gaussian_images(num_samples, 28, 28);
 
-# Stochastic interpolant using time $t=0.9$.
+# Stochastic interpolant using time 't=0.9'.
 visualize_interpolation(train_gaussian_images, train_images_filtered)
 
 # Define the network - u-net 
@@ -42,7 +42,7 @@ ps, st = Lux.setup(Random.default_rng(), velocity_cnn); # .|> dev;
 # Define the batch_size
 batch_size = 32;
 num_batches = ceil(Int, num_samples / batch_size);
-num_epochs = 150;
+num_epochs = 50;
 
 # Define the Adam optimizer with a learning rate (1e-6)
 opt = Optimisers.setup(Adam(1.0e-3, (0.9f0, 0.99f0), 1e-10), ps);
@@ -62,7 +62,8 @@ step_size = 1.0 / num_steps;  # Step size (proportional to time step)
 dev = cpu_device()
 gaussian_image = gaussian_image |> dev;
 _st = Lux.testmode(st);
-generated_digit = generate_digit(velocity_cnn, ps, _st, gaussian_image, num_steps, batch_size, step_size, dev);
+generated_digit = generate_digit(velocity_cnn, ps, _st, gaussian_image, num_steps, batch_size, dev; method=:euler);
+
 
 generated_digit = generated_digit |> cpu_device();
 gaussian_image = gaussian_image |> cpu_device();

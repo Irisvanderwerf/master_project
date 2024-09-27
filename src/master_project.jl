@@ -14,7 +14,8 @@ export load_mnist_data
 export plot_images
 export load_mnist_labels
 export generate_gaussian_images
-export filter_train_images_by_digit
+export select_mnist_images
+export resize_images
 
 # Add functions for stochastic interpolant
 export stochastic_interpolant
@@ -38,6 +39,8 @@ export get_minibatch
 export train!
 
 # Add functions for generating a digit
+export forward_euler
+export runge_kutta_4
 export generate_digit
 export plot_generated_digits
 

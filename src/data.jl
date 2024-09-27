@@ -1,4 +1,6 @@
 using Plots
+using Images
+using ImageTransformations
 
 ### MNIST data  - images ###
 function reshape_mnist_data(data::Vector{UInt8}, num_images::Int, num_rows::Int, num_cols::Int)
@@ -27,20 +29,21 @@ function load_mnist_labels(label_path::String, num_labels::Int)
     return labels[1:num_labels]
 end
 
-### MNIST data - digit specific data ###
-function filter_train_images_by_digit(images, labels, target_digit, max_count=nothing)
-    # Get indices of images corresponding to the target digit
-    indices = findall(labels .== target_digit)
-    
-    # If max_count is specified, limit the number of images returned
-    if !isnothing(max_count) && length(indices) > max_count
-        indices = indices[1:max_count]
+### MNIST data - digit specific, all digits, or all images ###
+function select_mnist_images(images, labels, digit=nothing, num_samples=nothing)
+    if isnothing(digit)
+        if isnothing(num_samples)
+            # Return all images if no digit or number of samples is specified
+            return images
+        else
+            # Randomly select num_samples from all images
+            indices = rand(1:size(images, 1), num_samples)
+        end
+    else
+        # Select images for the chosen digit
+        indices = rand(findall(labels .== digit), num_samples)
     end
-    
-    # Select the corresponding images
-    filtered_images = images[indices, :, :, :]
-    
-    return filtered_images[:,:,:,1]
+    return images[indices, :, :]
 end
 
 ### Initial distribution data - Gaussian (Normal distributed) images ###
@@ -63,3 +66,6 @@ function plot_images(images, num_images_to_show)
     end
     display(p)
 end
+
+
+
