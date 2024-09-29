@@ -80,7 +80,7 @@ function plot_generated_digits(images, num_images_to_show)
     p = plot(layout=(num_rows, num_cols), size=(800, 800))
     
     for i in 1:num_images_to_show
-        img = reshape(images[:, :, 1, i], (28, 28))  # Reshape to (28, 28)
+        img = reshape(images[:, :, 1, i], (32, 32))  # Reshape to (28, 28) - changed to (32,32)
         heatmap!(img, color=:grays, axis=false, legend=false, subplot=i, title="Generated Image $i")
     end
     

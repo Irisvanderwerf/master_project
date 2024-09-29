@@ -46,6 +46,25 @@ function select_mnist_images(images, labels, digit=nothing, num_samples=nothing)
     return images[indices, :, :]
 end
 
+### Reshape the images to size 32 by 32 ###
+function reshape_images(images, target_size)
+    # Get the number of images and their original height and width
+    num_images, height, width = size(images)
+    
+    # Calculate padding for top/bottom and left/right
+    padding = (target_size - height) ÷ 2
+    
+    # Initialize an array of zeros for the padded images
+    padded_images = zeros(eltype(images), num_images, target_size, target_size)
+    
+    # Loop through each image and place the 28x28 image in the center of the 32x32 padded image
+    for i in 1:num_images
+        padded_images[i, padding+1:padding+height, padding+1:padding+width] .= images[i, :, :]
+    end
+    
+    return padded_images
+end
+
 ### Initial distribution data - Gaussian (Normal distributed) images ###
 function generate_gaussian_images(num_images::Int, num_rows::Int, num_cols::Int, mean::Float64=0.0, stddev::Float64=1.0)
     # Create a 3D array to hold the images (num_images, num_rows, num_cols)

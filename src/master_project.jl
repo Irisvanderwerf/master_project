@@ -15,7 +15,7 @@ export plot_images
 export load_mnist_labels
 export generate_gaussian_images
 export select_mnist_images
-export resize_images
+export reshape_images
 
 # Add functions for stochastic interpolant
 export stochastic_interpolant

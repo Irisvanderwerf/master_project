@@ -89,7 +89,8 @@ function UNet(
         up2 = UpBlock(2*hidden_channels[2], hidden_channels[1]),
         up1 = UpBlock(2*hidden_channels[1], hidden_channels[1]),
         
-        final_conv = Conv((1, 1), hidden_channels[1] => out_channels, pad=(2,2), use_bias=false)  # Output layer with one channel
+        # changed image to size (32,32) so we can remove the padding pad=(2,2)
+        final_conv = Conv((1, 1), hidden_channels[1] => out_channels, use_bias=false)  # Output layer with one channel
     ) do x
         x_down1 = down1(x)
         # println("after down1 shape: ", size(x_down1))
@@ -143,8 +144,8 @@ function build_full_unet(
 
         x = conv_in(I_sample) # shape: (28, 28, 32, 32)
 
-        # Reshape t_sample to match the spatial dimensions of I_sample (28, 28, 1, B)
-        t_sample_reshaped = repeat(t_sample, 28, 28, 1, 1)
+        # Reshape t_sample to match the spatial dimensions of I_sample (28, 28, 1, B) - changed to (32,32,1,B)
+        t_sample_reshaped = repeat(t_sample, 32, 32, 1, 1)
         t_sample_reshaped = t_embedding(t_sample_reshaped) # shape: (28, 28, 32, 32)
 
         # Concatenate the time t along the channel dimension
