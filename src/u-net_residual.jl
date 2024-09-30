@@ -146,7 +146,7 @@ function build_full_unet(
 
         # Reshape t_sample to match the spatial dimensions of I_sample (28, 28, 1, B) - changed to (32,32,1,B)
         t_sample_reshaped = repeat(t_sample, 32, 32, 1, 1)
-        t_sample_reshaped = t_embedding(t_sample_reshaped) # shape: (28, 28, 32, 32)
+        t_sample_reshaped = t_embedding(t_sample_reshaped) # shape: (32, 32, 32, 32)
 
         # Concatenate the time t along the channel dimension
         x = cat(x, t_sample_reshaped, dims=3) # shape: (28, 28, 64, 32)
