@@ -1,6 +1,7 @@
 using Lux
 using Random
 using NNlib
+using LuxCUDA
 
 # Sinusoidal embedding for the time
 function sinusoidal_embedding(x, min_freq::AbstractFloat, max_freq::AbstractFloat, embedding_dims::Int)
@@ -8,12 +9,13 @@ function sinusoidal_embedding(x, min_freq::AbstractFloat, max_freq::AbstractFloa
     upper = log(max_freq)
     n = div(embedding_dims, 2)
     d = (upper - lower) / (n - 1)
-    freqs = exp.(lower:d:upper)
+    freqs = exp.(lower:d:upper) |> gpu_device()
     
     angular_speeds = reshape(2.0f0 * π * freqs, (1, 1, length(freqs), 1))
     
     embeddings = cat(sin.(angular_speeds .* x), cos.(angular_speeds .* x); dims=3)
-    return embeddings
+
+    return dropdims(embeddings, dims=(1, 2))
 end
 
 # ConvNextBlock definition where the time embedding perturbs the convolution
@@ -133,11 +135,11 @@ function build_full_unet(embedding_dim = 8, hidden_channels = [16, 32, 64], t_pa
         conv_in = Conv((3, 3), 1 => embedding_dim, leakyrelu, pad=(1,1)),
         u_net = UNet(embedding_dim, 1, hidden_channels, embedding_dim), 
         t_embedding = Chain(
-            t -> sinusoidal_embedding(t, 1.0f0, 1000.0f0, embedding_dim),
-            t -> reshape(t,:,size(t,4)), # Flatten the t_sample
+            t -> sinusoidal_embedding(t, 1.0f0, 1000.0f0, t_pars_embedding_dim),
+            # t -> reshape(t,:,size(t,4)), # Flatten the t_sample
             Lux.Dense(t_pars_embedding_dim => embedding_dim),
             NNlib.gelu,
-            Lux.Dense(t_pars_embedding_dim => embedding_dim),
+            Lux.Dense(embedding_dim => embedding_dim),
             NNlib.gelu,
           )
     ) do x

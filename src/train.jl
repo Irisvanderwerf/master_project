@@ -27,16 +27,24 @@ function loss_fn(velocity, dI_dt_sample)
     return mean_loss
 end
 
-function train!(velocity_cnn, ps, st, opt, num_epochs, batch_size, train_gaussian_images, train_images, num_batches)
+function train!(velocity_cnn, ps, st, opt, num_epochs, batch_size, train_gaussian_images, train_images, num_batches, dev)
     for epoch in 1:num_epochs
         println("Epoch $epoch")
+
+        shuffle_ids = shuffle(1:size(train_gaussian_images, 1))
+        train_gaussian_images = train_gaussian_images[shuffle_ids, :, :]
+
+        shuffle_ids = shuffle(1:size(train_images, 1))
+        train_images = train_gaussian_images[shuffle_ids, :, :]
+
+
         epoch_loss = 0.0
         for batch_index in 1:num_batches-1
             # Sample a batch from the gaussian distribution (z) and target distribution (MNIST data)
-            z_sample = Float32.(get_minibatch(train_gaussian_images, batch_size, batch_index))  # shape: (28, 28, 1, N_b)
-            target_sample = Float32.(get_minibatch(train_images, batch_size, batch_index))  # shape: (28, 28, 1, N_b)
+            z_sample = Float32.(get_minibatch(train_gaussian_images, batch_size, batch_index)) |> dev  # shape: (28, 28, 1, N_b)
+            target_sample = Float32.(get_minibatch(train_images, batch_size, batch_index)) |> dev  # shape: (28, 28, 1, N_b)
             # Sample time t from a uniform distribution between 0 and 1
-            t_sample = Float32.(reshape(rand(Float32, batch_size), 1, 1, 1, batch_size))  # shape: (1, 1, 1, N_b)
+            t_sample = Float32.(reshape(rand(Float32, batch_size), 1, 1, 1, batch_size)) |> dev  # shape: (1, 1, 1, N_b)
 
             # Define the loss function closure for gradient calculation
             loss_fn_closure = (ps_) -> begin
