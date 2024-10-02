@@ -12,11 +12,8 @@ function get_minibatch(images, batch_size, batch_index)
 end
 
 function loss_fn(velocity, dI_dt_sample)
-    # println("Inside loss_fn:")
-    # println("Velocity shape: ", size(velocity))
-    # println("dI_dt_sample shape: ", size(dI_dt_sample))
     # Compute the loss
-    loss = velocity .^ 2 - 2 .* (dI_dt_sample .* velocity)
+    loss = velocity .^ 2 .- 2 .* (velocity .* dI_dt_sample)
 
     # Check for NaN or Inf in the loss using broadcasting
     if any(isnan.(loss)) || any(isinf.(loss))
@@ -30,7 +27,8 @@ end
 function train!(velocity_cnn, ps, st, opt, num_epochs, batch_size, train_gaussian_images, train_images, num_batches, dev)
     for epoch in 1:num_epochs
         println("Epoch $epoch")
-
+        
+        # shuffle the gaussian images and train_images such that you have different pairs during training.
         shuffle_ids = shuffle(1:size(train_gaussian_images, 1))
         train_gaussian_images = train_gaussian_images[shuffle_ids, :, :]
 
@@ -41,18 +39,20 @@ function train!(velocity_cnn, ps, st, opt, num_epochs, batch_size, train_gaussia
         epoch_loss = 0.0
         for batch_index in 1:num_batches-1
             # Sample a batch from the gaussian distribution (z) and target distribution (MNIST data)
-            z_sample = Float32.(get_minibatch(train_gaussian_images, batch_size, batch_index)) |> dev  # shape: (28, 28, 1, N_b)
-            target_sample = Float32.(get_minibatch(train_images, batch_size, batch_index)) |> dev  # shape: (28, 28, 1, N_b)
+            initial_sample = Float32.(get_minibatch(train_gaussian_images, batch_size, batch_index)) |> dev  # shape: (32, 32, 1, N_b)
+            target_sample = Float32.(get_minibatch(train_images, batch_size, batch_index)) |> dev  # shape: (32, 32, 1, N_b)
             # Sample time t from a uniform distribution between 0 and 1
             t_sample = Float32.(reshape(rand(Float32, batch_size), 1, 1, 1, batch_size)) |> dev  # shape: (1, 1, 1, N_b)
+            # Sample the noise for the stochastic interpolant
+            z_sample = randn(Float32, 32, 32, 1, batch_size)  # shape: (32,32,1,N_b)
 
             # Define the loss function closure for gradient calculation
             loss_fn_closure = (ps_) -> begin
                 # Compute the interpolant I_t and its time derivative ∂t I_t
-                I_sample = Float32.(stochastic_interpolant(z_sample, target_sample, t_sample)) # shape: (28, 28, 1, N_b)
-                dI_dt_sample = Float32.(time_derivative_stochastic_interpolant(z_sample, target_sample, t_sample)) # shape: (28, 28, 1, N_b)
+                I_sample = Float32.(stochastic_interpolant(initial_sample, target_sample, z_sample, t_sample)) # shape: (32, 32, 1, N_b)
+                dI_dt_sample = Float32.(time_derivative_stochastic_interpolant(initial_sample, target_sample, z_sample, t_sample)) # shape: (32, 32, 1, N_b)
                 # Compute velocity using the neural network
-                velocity, _ = Lux.apply(velocity_cnn, (I_sample, t_sample), ps_, st) # shape: (28, 28, 1, N_b)
+                velocity, _ = Lux.apply(velocity_cnn, (I_sample, t_sample), ps_, st) # shape: (32, 32, 1, N_b)
                 return loss_fn(velocity, dI_dt_sample), st
             end
 
@@ -73,30 +73,3 @@ function train!(velocity_cnn, ps, st, opt, num_epochs, batch_size, train_gaussia
     end
     return ps, st
 end
-
-#             # Store the current parameters before update
-#             old_ps = copy(ps)
-
-#             # Compute gradients using the loss function closure
-#             gs_tuple = gradient(loss_fn_closure, ps)
-#             # Unpack the tuple to get the actual gradient
-#             gs = gs_tuple[1]
-#             gradient_clip_value = 1.0  # Example clip value
-#             clipped_grads = clamp.(gs, -gradient_clip_value, gradient_clip_value)
-#             # Check if gradients are very small or NaN
-#             println("Gradient norms: ", norm(clipped_grads))
-
-#             # Update the parameters using the optimizer
-#             opt, ps = Optimisers.update!(opt, ps, clipped_grads)
-
-#             # Calculate how much the parameters changed
-#             ps_diff = norm(ps .- old_ps)
-#             println("Parameter change: ", ps_diff)
-
-#             # Calculate and display the mean loss for the batch
-#             mean_loss = loss_fn_closure(ps)
-#             println("Batch loss: $mean_loss")
-#         end
-#     end
-#     return ps, st
-# end
