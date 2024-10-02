@@ -9,7 +9,7 @@ function sinusoidal_embedding(x, min_freq::AbstractFloat, max_freq::AbstractFloa
     upper = log(max_freq)
     n = div(embedding_dims, 2)
     d = (upper - lower) / (n - 1)
-    freqs = exp.(lower:d:upper) |> gpu_device()
+    freqs = exp.(lower:d:upper) #|> gpu.device()
     
     angular_speeds = reshape(2.0f0 * π * freqs, (1, 1, length(freqs), 1))
     
@@ -91,11 +91,13 @@ function UNet(
         down1 = DownBlock(in_channels, hidden_channels[1], embedding_dim),
         down2 = DownBlock(hidden_channels[1], hidden_channels[2], embedding_dim),
         down3 = DownBlock(hidden_channels[2], hidden_channels[3], embedding_dim),
+
+        bottom = ConvNextBlock(in_channels=hidden_channels[3], out_channels=hidden_channels[3], embedding_dim=embedding_dim),
         
-        bottom = Chain(
-            Conv((3, 3), hidden_channels[3] => 2 * hidden_channels[3], leakyrelu; pad=1),
-            Conv((3, 3), 2 * hidden_channels[3] => hidden_channels[3], leakyrelu; pad=1),
-        ),
+        # bottom = Chain(
+        #     Conv((3, 3), hidden_channels[3] => 2 * hidden_channels[3], leakyrelu; pad=1),
+        #     Conv((3, 3), 2 * hidden_channels[3] => hidden_channels[3], leakyrelu; pad=1),
+        # ),
 
         # Up-sampling path
         up3 = UpBlock(2 * hidden_channels[3], hidden_channels[2], embedding_dim),   
@@ -113,7 +115,7 @@ function UNet(
         x_down2 = down2((x_down1, pars)) # size: (8,8,hidden_channels[2],batch_size)
         x_down3 = down3((x_down2, pars)) # size: (4,4,hidden_channels[3],batch_size)
 
-        x = bottom(x_down3) # The size of bottom: (4,4,hidden_channels[3],32)
+        x = bottom((x_down3, pars)) # The size of bottom: (4,4,hidden_channels[3],32)
 
         # Up-sampling with skip connections
         x = cat(x, x_down3, dims=3) # (4,4,2*hidden_channels[3],batch_size)
