@@ -16,8 +16,8 @@ train_labels = load_mnist_labels("mnist_data/train-labels.idx1-ubyte", 60000);
 plot_images(train_images, 9);
 
 # Filter images for the digit or take everything
-digit = nothing;
-num_samples = 9000;
+digit = 3;
+num_samples = 4000;
 train_images_filtered = select_mnist_images(train_images, train_labels, digit, num_samples); 
 # standardize the filtered mnist images --> mean 0 and stv 1.
 train_images_filtered = (train_images_filtered .- mean(train_images_filtered)) ./ std(train_images_filtered);
@@ -26,7 +26,10 @@ train_images_filtered = reshape_images(train_images_filtered, 32);
 plot_images(train_images_filtered, 9);
 
 # Plot x gaussian images to check if the process went correctly 
-train_gaussian_images = generate_gaussian_images(num_samples, 32, 32);
+# train_gaussian_images = generate_gaussian_images(num_samples, 32, 32);
+
+train_gaussian_images = select_mnist_images(train_images, train_labels, 1, num_samples); 
+train_gaussian_images = reshape_images(train_gaussian_images, 32);
 
 # Stochastic interpolant using time 't=0.9'.
 visualize_interpolation(train_gaussian_images, train_images_filtered)
@@ -60,7 +63,7 @@ step_size = 1.0 / num_steps;  # Step size (proportional to time step)
 # Generate the digit image
 gaussian_image = gaussian_image |> dev;
 _st = Lux.testmode(st);
-generated_digit = generate_digit(velocity_cnn, ps, _st, gaussian_image, num_steps, batch_size, dev; method=:euler);
+generated_digit = generate_digit(velocity_cnn, ps, _st, gaussian_image, num_steps, batch_size, dev; method=:rk4);
 
 
 generated_digit = generated_digit |> cpu_device();
