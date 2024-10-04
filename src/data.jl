@@ -29,21 +29,22 @@ function load_mnist_labels(label_path::String, num_labels::Int)
     return labels[1:num_labels]
 end
 
-### MNIST data - digit specific, all digits, or all images ###
-function select_mnist_images(images, labels, digit=nothing, num_samples=nothing)
+## Filter the MNIST data ###
+function filter_mnist_data(images, labels, digit=nothing, num_samples=nothing)
     if isnothing(digit)
         if isnothing(num_samples)
-            # Return all images if no digit or number of samples is specified
-            return images
+            # Return all images and labels if no digit or number of samples is specified
+            return images, labels
         else
-            # Randomly select num_samples from all images
+            # Randomly select num_samples from all images and labels
             indices = rand(1:size(images, 1), num_samples)
         end
     else
-        # Select images for the chosen digit
+        # Select images and labels for the chosen digit
         indices = rand(findall(labels .== digit), num_samples)
     end
-    return images[indices, :, :]
+    # Return both the selected images and their corresponding labels
+    return images[indices, :, :], labels[indices]
 end
 
 ### Reshape the images to size 32 by 32 ###
@@ -63,6 +64,20 @@ function reshape_images(images, target_size)
     end
     
     return padded_images
+end
+
+### Function to transform labels into 32x32 images ###
+function labels_to_images(train_labels::Vector{Int}, target_size::Int)
+    num_samples = length(train_labels)
+    # Initialize an array of size (num_samples, target_size, target_size)
+    label_images = zeros(Int, num_samples, target_size, target_size)
+    
+    # Fill each 32x32 image with the corresponding label value
+    for i in 1:num_samples
+        label_images[i, :, :] .= train_labels[i]  # Fill the image with the label value
+    end
+    
+    return label_images
 end
 
 ### Initial distribution data - Gaussian (Normal distributed) images ###

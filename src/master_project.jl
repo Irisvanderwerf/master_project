@@ -7,7 +7,8 @@ include("stochastic_interpolant.jl")
 include("train.jl")
 include("generate_digit.jl")
 # include("u-net_residual.jl")
-include("u-net_conv.jl")
+# include("u-net_conv.jl")
+include("u-net_conv_conditioned.jl")
 
 # Add functions for data 
 export reshape_mnist_data
@@ -15,8 +16,9 @@ export load_mnist_data
 export plot_images
 export load_mnist_labels
 export generate_gaussian_images
-export select_mnist_images
 export reshape_images
+export filter_mnist_data
+export labels_to_images
 
 # Add functions for stochastic interpolant
 export stochastic_interpolant
@@ -35,7 +37,15 @@ export time_derivative_stochastic_interpolant
 # export build_full_unet
 # export ConvNextBlock
 
-# Add functions for second u-net - convolutional
+# # Add functions for second u-net - convolutional
+# export sinusoidal_embedding
+# export ConvNextBlock
+# export DownBlock
+# export UpBlock
+# export UNet
+# export build_full_unet
+
+# Add functions for third u-net - conditioning
 export sinusoidal_embedding
 export ConvNextBlock
 export DownBlock

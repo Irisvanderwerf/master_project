@@ -100,7 +100,7 @@ function UNet(
         # ),
 
         # Up-sampling path
-        up3 = UpBlock(2 * hidden_channels[3], hidden_channels[2], embedding_dim),   
+        up3 = UpBlock(2 * hidden_channels[3], hidden_channels[2], embedding_dim ),   
         up2 = UpBlock(2 * hidden_channels[2], hidden_channels[1], embedding_dim),
         up1 = UpBlock(2 * hidden_channels[1], hidden_channels[1], embedding_dim),
         
@@ -134,19 +134,19 @@ end
 # Full U-Net model with time embedding
 function build_full_unet(embedding_dim = 8, hidden_channels = [16, 32, 64], t_pars_embedding_dim = 8)
     return @compact(
-        conv_in = Conv((3, 3), 1 => embedding_dim, leakyrelu, pad=(1,1)),
+        conv_in = Conv((3, 3), 1 => (embedding_dim-1), leakyrelu, pad=(1,1)),
         u_net = UNet(embedding_dim, 1, hidden_channels, embedding_dim), 
         t_embedding = Chain(
             t -> sinusoidal_embedding(t, 1.0f0, 1000.0f0, t_pars_embedding_dim),
-            # t -> reshape(t,:,size(t,4)), # Flatten the t_sample
             Lux.Dense(t_pars_embedding_dim => embedding_dim),
             NNlib.gelu,
             Lux.Dense(embedding_dim => embedding_dim),
             NNlib.gelu,
           )
     ) do x
-        I_sample, t_sample = x # size I_sample: (32,32,1,batch_size), t_sample: (1,1,1,batch_size)
-        x = conv_in(I_sample) # size: (28,28, embedding_dim, batch_size)
+        I_sample, t_sample, cond = x # size I_sample: (32,32,1,batch_size), t_sample: (1,1,1,batch_size), cond: (32,32,1,batch_size)
+        x = conv_in(I_sample) # size: (32, 32, embedding_dim-1, batch_size)
+        x = cat(x, cond, dims=3) # size: (32,32,embedding_dim, batch_size)
 
         t_sample_embedded = t_embedding(t_sample) # size: (embedding_dim, batch_size)
 

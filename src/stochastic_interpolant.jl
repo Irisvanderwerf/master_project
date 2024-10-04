@@ -13,8 +13,8 @@ function visualize_interpolation(gaussian_images, target_images, image_index=1)
     z = randn(Float32, 32, 32)
     
     # Perform stochastic interpolation
-    interpolated_img_noise = stochastic_interpolant(img1, img2, z, 0.5)
-    interpolated_img = stochastic_interpolant(img1, img2, 0, 0.5)
+    interpolated_img_noise = stochastic_interpolant(img1, img2, z, 0.7)
+    interpolated_img = stochastic_interpolant(img1, img2, 0, 0.7)
 
     # Create plots for the Gaussian image, target image, and interpolated image
     p1 = heatmap(img1, color=:grays, axis=false, legend=false, title="Gaussian Image")
