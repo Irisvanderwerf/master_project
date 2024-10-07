@@ -4,8 +4,10 @@ module master_project
 include("data.jl")
 include("stochastic_interpolant.jl")
 # include("cnn.jl")
-include("train.jl")
-include("generate_digit.jl")
+# include("train_ODE.jl")
+include("train_SDE.jl")
+# include("generate_digit_ODE.jl")
+include("generate_digit_SDE.jl")
 # include("u-net_residual.jl")
 # include("u-net_conv.jl")
 include("u-net_conv_conditioned.jl")
@@ -53,15 +55,28 @@ export UpBlock
 export UNet
 export build_full_unet
 
-# Add fucntions for training
+# # Add fucntions for training - ODE
+# export loss_fn
+# export get_minibatch
+# export train!
+
+# Add functions for training - SDE
 export loss_fn
 export get_minibatch
 export train!
 
-# Add functions for generating a digit
-export forward_euler
-export runge_kutta_4
+# # Add functions for generating a digit - ODE
+# export forward_euler
+# export runge_kutta_4
+# export generate_digit
+# export plot_generated_digits
+
+# Add functions for generating a digit - SDE
+export gamma
+export epsilon
+export euler_maruyama
 export generate_digit
+export compute_score
 export plot_generated_digits
 
 end

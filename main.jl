@@ -40,38 +40,42 @@ visualize_interpolation(train_gaussian_images, train_images_filtered)
 # Define the network - u-net with ConvNextBlocks 
 velocity_cnn = build_full_unet(16,[32,64,128],8);
 
-# Initialize the network parameters and the state
-ps, st = Lux.setup(Random.default_rng(), velocity_cnn); # .|> dev;
+# Initialize the network parameters and the state - ODE
+ps_drift, st_drift = Lux.setup(Random.default_rng(), velocity_cnn); # .|> dev;
+# Initialize the network parameters and the states (drift and score) - SDE
+ps_denoiser, st_denoiser = Lux.setup(Random.default_rng(), velocity_cnn); # |> dev;
 
 # Define the batch_size
 batch_size = 32;
 num_batches = ceil(Int, num_samples / batch_size);
-num_epochs = 10;
+num_epochs = 15;
 
 # Define the Adam optimizer with a learning rate (1e-6)
-opt = Optimisers.setup(Adam(1.0e-3, (0.9f0, 0.99f0), 1e-10), ps);
+opt_drift = Optimisers.setup(Adam(1.0e-3, (0.9f0, 0.99f0), 1e-10), ps_drift);
+opt_denoiser = Optimisers.setup(Adam(1.0e-3, (0.9f0, 0.99f0), 1e-10), ps_denoiser);
 
 # train_images_filtered = train_images_filtered |> dev;
 # train_gaussian_images = train_gaussian_images |> dev;
 
 # Start training
-train!(velocity_cnn, ps, st, opt, num_epochs, batch_size, train_gaussian_images, train_images_filtered, label_images_32x32, num_batches, dev);
+train!(velocity_cnn, ps_drift, st_drift, opt_drift, ps_denoiser, st_denoiser, opt_denoiser, num_epochs, batch_size, train_gaussian_images, train_images_filtered, label_images_32x32, num_batches, dev);
 
 # Generate digits 
 gaussian_image = randn(Float32, 32, 32, 1, batch_size);  # Generate a initial Gaussian noise image
-num_steps = 200;  # Number of steps to evolve the image
+num_steps = 100;  # Number of steps to evolve the image
 step_size = 1.0 / num_steps;  # Step size (proportional to time step)
 label = 9; # Choose the digit you want to generate. 
 
 # Generate the digit image
 dev = cpu_device()
 gaussian_image = gaussian_image |> dev;
-_st = Lux.testmode(st);
-generated_digit = generate_digit(velocity_cnn, ps, _st, gaussian_image, label, num_steps, batch_size, dev; method=:euler);
+_st_drift = Lux.testmode(st_drift);
+_st_denoiser = Lux.testmode(st_denoiser);
+generated_digit = generate_digit(gaussian_image, label, batch_size, step_size, ps_drift, _st_drift, ps_denoiser, _st_denoiser, velocity_cnn, dev);
 
 generated_digit = generated_digit |> cpu_device();
 gaussian_image = gaussian_image |> cpu_device();
 
 # Show the first 9 generated images
-plot_generated_digits(generated_digit, 9);
+plot_generated_digits(generated_digit, 9)
 
