@@ -24,12 +24,14 @@ function loss_fn(velocity, dI_dt_sample)
     return mean_loss
 end
 
-function train!(velocity_cnn, ps_drift, st_drift, opt_drift, ps_denoiser, st_denoiser, opt_denoiser, num_epochs, batch_size, train_gaussian_images, train_images, train_labels, num_batches, dev)
+function train!(velocity_cnn, ps_drift, st_drift, opt_drift, ps_denoiser, st_denoiser, opt_denoiser, num_epochs, batch_size, train_gaussian_images, train_images, train_labels, num_batches, dev, is_gaussian)
     for epoch in 1:num_epochs
         println("Epoch $epoch")
 
         epoch_drift_loss = 0.0
-        epoch_denoiser_loss = 0.0
+        if !is_gaussian
+            epoch_denoiser_loss = 0.0
+        end
         for batch_index in 1:num_batches-1
             # Sample a batch from the gaussian distribution (z) and target distribution (MNIST data)
             initial_sample = Float32.(get_minibatch(train_gaussian_images, batch_size, batch_index)) |> dev  # shape: (32, 32, 1, N_b)
@@ -65,31 +67,42 @@ function train!(velocity_cnn, ps_drift, st_drift, opt_drift, ps_denoiser, st_den
             opt_drift, ps_drift = Optimisers.update!(opt_drift, ps_drift, gs_drift)  
             
             ## Update the weights for the denoiser term ##
-            # Define the loss function closure for gradient calculation
-            loss_denoiser_closure = (ps_) -> begin
-                # Compute the interpolant I_t and its time derivative ∂t I_t
-                I_sample = Float32.(stochastic_interpolant(initial_sample, target_sample, z_sample, t_sample)) # shape: (32, 32, 1, N_b)
-                # Compute velocity using the neural network
-                denoiser, _ = Lux.apply(velocity_cnn, (I_sample, t_sample, target_labels_sample), ps_, st_denoiser) # shape: (32, 32, 1, N_b)
-                return loss_fn(denoiser, z_sample), st_denoiser
+            if !is_gaussian
+                # Define the loss function closure for gradient calculation
+                loss_denoiser_closure = (ps_) -> begin
+                    # Compute the interpolant I_t and its time derivative ∂t I_t
+                    I_sample = Float32.(stochastic_interpolant(initial_sample, target_sample, z_sample, t_sample)) # shape: (32, 32, 1, N_b)
+                    # Compute velocity using the neural network
+                    denoiser, _ = Lux.apply(velocity_cnn, (I_sample, t_sample, target_labels_sample), ps_, st_denoiser) # shape: (32, 32, 1, N_b)
+                    return loss_fn(denoiser, z_sample), st_denoiser
+                end
+    
+                (loss_denoiser, st_denoiser), pb_denoiser_f = Zygote.pullback(
+                    p -> loss_denoiser_closure(p), ps_denoiser
+                ); 
+
+                # println("structure of pb_f: ", typeof(pb_f))
+                epoch_denoiser_loss += loss_denoiser
+
+                gs_denoiser = pb_denoiser_f((one(loss_denoiser), nothing))[1];
+                # println("Gradient norm: ", norm(gs))
+                opt_denoiser, ps_denoiser = Optimisers.update!(opt_denoiser, ps_denoiser, gs_denoiser)
             end
-        
-            (loss_denoiser, st_denoiser), pb_denoiser_f = Zygote.pullback(
-                p -> loss_denoiser_closure(p), ps_denoiser
-            ); 
-
-            # println("structure of pb_f: ", typeof(pb_f))
-            epoch_denoiser_loss += loss_denoiser
-
-            gs_denoiser = pb_denoiser_f((one(loss_denoiser), nothing))[1];
-            # println("Gradient norm: ", norm(gs))
-            opt_denoiser, ps_denoiser = Optimisers.update!(opt_denoiser, ps_denoiser, gs_denoiser)
-
-            end
+        end
         epoch_drift_loss /= num_batches
-        epoch_denoiser_loss /= num_batches
         println("Epoch loss of the drift term: $epoch_drift_loss")
-        println("Epoch loss of the denoiser term: $epoch_denoiser_loss")
+
+        if !is_gaussian
+            epoch_denoiser_loss /= num_batches
+            println("Epoch loss of the denoiser term: $epoch_denoiser_loss")
+        end
     end
     return ps_drift, st_drift, ps_denoiser, st_denoiser
+    if !is_gaussian
+        return ps_denoiser, st_denoiser
+    end
+
 end
+
+
+

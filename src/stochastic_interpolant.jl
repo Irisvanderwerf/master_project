@@ -1,7 +1,6 @@
 # Define the stochastic interpolant function
 function stochastic_interpolant(image1, image2, z, λ) 
-    return cos.(π/2 .*λ) .* image1 .+ sin.(π/2 .*λ).* image2 .+ .√(2 .* λ .* (1 .- λ)) .* z
-    # return (1 .- λ) .* image1 .+ λ .* image2 .+ .√(2 .* λ .* (1 .- λ)) .* z
+    return cos.(π/2 .*λ) .* image1 .+ sin.(π/2 .*λ).* image2 # .+ .√(2 .* λ .* (1 .- λ)) .* z
 end
 
 ### Plot an example of the stochastic interpolant ###
@@ -28,6 +27,5 @@ end
 
 ### Time derivative stochastic interpolant ###
 function time_derivative_stochastic_interpolant(image1, image2, z, λ)
-    return -π/2 .*sin.(π/2 .*λ) .* image1 .+ π/2 .*cos.(π/2 .*λ).* image2 .+ ((2 .- 4 .* λ) ./ (2 .* .√(2 .* λ .* (1 .- λ)))) .* z
-    # return -image1 .+ image2 .+ ((2 .- 4 .* λ) ./ (2 .* .√(2 .* λ .* (1 .- λ)))) .* z
+    return -π/2 .*sin.(π/2 .*λ) .* image1 .+ π/2 .*cos.(π/2 .*λ).* image2 # .+ ((2 .- 4 .* λ) ./ (2 .* .√(2 .* λ .* (1 .- λ)))) .* z
 end

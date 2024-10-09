@@ -73,10 +73,15 @@ export train!
 
 # Add functions for generating a digit - SDE
 export gamma
+export alpha
+export beta
+export derivative_alpha
+export derivative_beta
 export epsilon
 export euler_maruyama
 export generate_digit
-export compute_score
+export compute_score_denoiser
+export compute_score_velocity
 export plot_generated_digits
 
 end
