@@ -56,7 +56,7 @@ function generate_digit(gaussian_image, label, batch_size, Δt, ps_drift, st_dri
     # Initialize time
     t = 0
     # Set label to the right size
-    label = fill(label, 32, 32, 1, batch_size) |> dev
+    label = (1/10) .* fill(label, 32, 32, 1, batch_size) |> dev
     if !is_gaussian
         while t < 1
             # Reshape t_sample to match the right size
@@ -95,20 +95,5 @@ function generate_digit(gaussian_image, label, batch_size, Δt, ps_drift, st_dri
         # Return the generated samples
         return gaussian_image
     end
-end
-
-# plot the generated images
-function plot_generated_digits(images, num_images_to_show)
-    num_cols = ceil(Int, sqrt(num_images_to_show))
-    num_rows = ceil(Int, num_images_to_show / num_cols)
-
-    p = plot(layout=(num_rows, num_cols), size=(800, 800))
-    
-    for i in 1:num_images_to_show
-        img = reshape(images[:, :, 1, i], (32, 32))  # Reshape to (28, 28) - changed to (32,32)
-        heatmap!(img, color=:grays, axis=false, legend=false, subplot=i, title="Generated Image")
-    end
-    
-    display(p)
 end
 

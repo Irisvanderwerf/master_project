@@ -49,9 +49,8 @@ export time_derivative_stochastic_interpolant
 
 # Add functions for third u-net - conditioning
 export sinusoidal_embedding
-export ConvNextBlock
-export DownBlock
-export UpBlock
+export ConvNextBlock_up
+export ConvNextBlock_down
 export UNet
 export build_full_unet
 
@@ -82,6 +81,5 @@ export euler_maruyama
 export generate_digit
 export compute_score_denoiser
 export compute_score_velocity
-export plot_generated_digits
 
 end
