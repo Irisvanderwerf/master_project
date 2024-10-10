@@ -49,7 +49,7 @@ ps_denoiser, st_denoiser = Lux.setup(Random.default_rng(), velocity_cnn); # |> d
 # Define the batch_size, num_batches, num_epochs
 batch_size = 32;
 num_batches = ceil(Int, num_samples / batch_size);
-num_epochs = 5;
+num_epochs = 15;
 
 # Define the Adam optimizer with a learning rate (1e-6)
 opt_drift = Optimisers.setup(Adam(1.0e-3, (0.9f0, 0.99f0), 1e-10), ps_drift);
@@ -62,17 +62,22 @@ opt_denoiser = Optimisers.setup(Adam(1.0e-3, (0.9f0, 0.99f0), 1e-10), ps_denoise
 is_gaussian = true;
 
 # Start training
-train!(velocity_cnn, ps_drift, st_drift, opt_drift, ps_denoiser, st_denoiser, opt_denoiser, num_epochs, batch_size, train_gaussian_images, train_images_filtered, label_images_32x32, num_batches, dev, is_gaussian);
+train!(velocity_cnn, ps_drift, st_drift, opt_drift, ps_denoiser, st_denoiser, opt_denoiser, num_epochs, batch_size, train_gaussian_images, train_images_filtered, label_images_32x32, num_batches, dev, is_gaussian, "trained_models");
+
+# Load the model for generating the digits
+if !is_gaussian
+    ps_drift, st_drift, opt_drift, ps_denoiser, st_denoiser, opt_denoiser = load_model("trained_models/final_model.bson");
+else
+    ps_drift, st_drift, opt_drift = load_model("trained_models/final_model.bson");
+end
 
 # Generate digits 
 num_steps = 100;  # Number of steps to evolve the image
 step_size = 1.0 / num_steps;  # Step size (proportional to time step)
 batch_size = 9; 
 
+_st_drift = Lux.testmode(st_drift);
 if !is_gaussian
-    _st_drift = Lux.testmode(st_drift);
-else
-    _st_drift = Lux.testmode(st_drift);
     _st_denoiser = Lux.testmode(st_denoiser);
 end
 

@@ -1,7 +1,37 @@
 using Zygote
 using Statistics
 using Optimisers
+using BSON
 
+# Function to save the model parameters and optimizer states
+function save_model(file_path, ps_drift, st_drift, opt_drift, ps_denoiser=nothing, st_denoiser=nothing, opt_denoiser=nothing)
+    if ps_denoiser !== nothing && st_denoiser !== nothing && opt_denoiser !== nothing
+        BSON.@save file_path ps_drift st_drift opt_drift ps_denoiser st_denoiser opt_denoiser
+        println("Model and optimizer states (drift and denoiser) saved to $file_path")
+    else
+        BSON.@save file_path ps_drift st_drift opt_drift
+        println("Model and optimizer states (drift) saved to $file_path")
+    end
+end
+
+# Function to load the model parameters and optimizer states
+function load_model(file_path)
+    data = BSON.load(file_path)
+    ps_drift = data[:ps_drift]
+    st_drift = data[:st_drift]
+    opt_drift = data[:opt_drift]
+
+    if haskey(data, :ps_denoiser)
+        ps_denoiser = data[:ps_denoiser]
+        st_denoiser = data[:st_denoiser]
+        opt_denoiser = data[:opt_denoiser]
+        println("Loaded model and optimizer states (drift and denoiser) from $file_path")
+        return ps_drift, st_drift, opt_drift, ps_denoiser, st_denoiser, opt_denoiser
+    else
+        println("Loaded model and optimizer states (drift) from $file_path")
+        return ps_drift, st_drift, opt_drift
+    end
+end
 
 function get_minibatch(images, batch_size, batch_index)
     start_index = (batch_index - 1) * batch_size + 1
@@ -24,7 +54,7 @@ function loss_fn(velocity, dI_dt_sample)
     return mean_loss
 end
 
-function train!(velocity_cnn, ps_drift, st_drift, opt_drift, ps_denoiser, st_denoiser, opt_denoiser, num_epochs, batch_size, train_gaussian_images, train_images, train_labels, num_batches, dev, is_gaussian)
+function train!(velocity_cnn, ps_drift, st_drift, opt_drift, ps_denoiser, st_denoiser, opt_denoiser, num_epochs, batch_size, train_gaussian_images, train_images, train_labels, num_batches, dev, is_gaussian, save_path)
     for epoch in 1:num_epochs
         println("Epoch $epoch")
 
@@ -96,7 +126,17 @@ function train!(velocity_cnn, ps_drift, st_drift, opt_drift, ps_denoiser, st_den
             epoch_denoiser_loss /= num_batches
             println("Epoch loss of the denoiser term: $epoch_denoiser_loss")
         end
+
     end
+
+    # Save the model at the end of the full training process
+    println("Training completed. Saving the final model.")
+    if !is_gaussian
+        save_model("$save_path/final_model.bson", ps_drift, st_drift, opt_drift, ps_denoiser, st_denoiser, opt_denoiser)
+    else
+        save_model("$save_path/final_model.bson", ps_drift, st_drift, opt_drift)
+    end
+
     return ps_drift, st_drift, ps_denoiser, st_denoiser
     if !is_gaussian
         return ps_denoiser, st_denoiser

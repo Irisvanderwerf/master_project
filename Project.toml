@@ -4,6 +4,7 @@ authors = ["Irisvanderwerf <i.v.d.werf@student.tue.nl> and contributors"]
 version = "1.0.0-DEV"
 
 [deps]
+BSON = "fbb218c0-5317-5bc6-957e-2ee96dd4b1f0"
 CUDA = "052768ef-5323-5732-b1bb-66c8b64840ba"
 ComponentArrays = "b0b7db55-cfe3-40fc-9ded-d10e2dbeff66"
 Distributions = "31c24e10-a181-5473-b8eb-7969acd0382f"

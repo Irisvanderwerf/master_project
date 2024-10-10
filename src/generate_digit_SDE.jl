@@ -61,21 +61,6 @@ function generate_digit(gaussian_image, label, batch_size, Δt, ps_drift, st_dri
         while t < 1
             # Reshape t_sample to match the right size
             t_sample = Float32.(fill(t, (1, 1, 1, batch_size)))
-            # Compute the drift term
-            drift, st_drift = Lux.apply(velocity_cnn, (gaussian_image, t_sample, label), ps_drift, st_drift)
-            # Compute the score
-            score = compute_score_velocity(t, drift, gaussian_image)
-            # compute the term for dt 
-            b_F = drift .+ score
-            # Propagate the samples using the Euler-Maruyama method
-            gaussian_image = euler_maruyama(gaussian_image, b_F, epsilon(t), Δt)
-            # Update time
-            t += Δt
-        end
-    else
-        while t < 1
-            # Reshape t_sample to match the right size
-            t_sample = Float32.(fill(t, (1, 1, 1, batch_size)))
             # Compute the score (denoiser-based term)
             denoiser, st_denoiser = Lux.apply(velocity_cnn, (gaussian_image, t_sample, label), ps_denoiser, st_denoiser)
             score = compute_score_denoiser(t, denoiser)  # Construct score based on the denoiser
@@ -89,6 +74,21 @@ function generate_digit(gaussian_image, label, batch_size, Δt, ps_drift, st_dri
             # Propagate the samples using the Euler-Maruyama method
             gaussian_image = euler_maruyama(gaussian_image, b_F, epsilon(t), Δt)
         
+            # Update time
+            t += Δt
+        end
+    else
+        while t < 1
+            # Reshape t_sample to match the right size
+            t_sample = Float32.(fill(t, (1, 1, 1, batch_size)))
+            # Compute the drift term
+            drift, st_drift = Lux.apply(velocity_cnn, (gaussian_image, t_sample, label), ps_drift, st_drift)
+            # Compute the score
+            score = compute_score_velocity(t, drift, gaussian_image)
+            # compute the term for dt 
+            b_F = drift .+ score
+            # Propagate the samples using the Euler-Maruyama method
+            gaussian_image = euler_maruyama(gaussian_image, b_F, epsilon(t), Δt)
             # Update time
             t += Δt
         end

@@ -63,6 +63,8 @@ export build_full_unet
 export loss_fn
 export get_minibatch
 export train!
+export save_model
+export load_model
 
 # # Add functions for generating a digit - ODE
 # export forward_euler
