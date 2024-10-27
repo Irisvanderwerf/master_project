@@ -1,7 +1,8 @@
 module master_project
 
 # Write your package code here.
-include("data.jl")
+include("data_navierstokes.jl")
+include("data_mnist.jl")
 include("stochastic_interpolant.jl")
 # include("cnn.jl")
 # include("train_ODE.jl")
@@ -11,6 +12,18 @@ include("generate_digit_SDE.jl")
 # include("u-net_residual.jl")
 # include("u-net_conv.jl")
 include("u-net_conv_conditioned.jl")
+
+# Add functions for Navier Stokes simulations
+export Q
+export F
+export project
+export step_rk4
+export vorticity
+export gaussian
+export create_spectrum
+export random_field
+export create_params
+export zeros
 
 # Add functions for data 
 export reshape_mnist_data
@@ -61,8 +74,11 @@ export build_full_unet
 
 # Add functions for training - SDE
 export loss_fn
-export get_minibatch
+# export get_minibatch_MNIST
+export get_minibatch_NS
 export train!
+export save_model
+export load_model
 
 # # Add functions for generating a digit - ODE
 # export forward_euler
@@ -79,6 +95,7 @@ export derivative_beta
 export epsilon
 export euler_maruyama
 export generate_digit
+export generate_closure
 export compute_score_denoiser
 export compute_score_velocity
 

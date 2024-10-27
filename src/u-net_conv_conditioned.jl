@@ -2,6 +2,7 @@ using Lux
 using Random
 using NNlib
 using LuxCUDA
+using FFTW
 
 # Sinusoidal embedding for the time
 function sinusoidal_embedding(x, min_freq::AbstractFloat, max_freq::AbstractFloat, embedding_dims::Int)
@@ -217,8 +218,8 @@ end
 # Full U-Net model with time embedding
 function build_full_unet(embedding_dim = 8, hidden_channels = [16, 32, 64], t_pars_embedding_dim = 8)
     return @compact(
-        conv_in = Conv((3, 3), 1 => embedding_dim, leakyrelu, pad=(1,1)),
-        u_net = UNet(embedding_dim, 1, hidden_channels, embedding_dim, embedding_dim), 
+        conv_in = Conv((3, 3), 2 => embedding_dim, leakyrelu, pad=(1,1)),
+        u_net = UNet(embedding_dim, 2, hidden_channels, embedding_dim, embedding_dim), 
         t_embedding = Chain(
             t -> sinusoidal_embedding(t, 1.0f0, 1000.0f0, t_pars_embedding_dim),
             Lux.Dense(t_pars_embedding_dim => embedding_dim),
@@ -227,11 +228,17 @@ function build_full_unet(embedding_dim = 8, hidden_channels = [16, 32, 64], t_pa
             NNlib.gelu,
           )
     ) do x
-        I_sample, t_sample, cond = x # size I_sample: (32,32,1,batch_size), t_sample: (1,1,1,batch_size), cond: (32,32,1,batch_size)
-        x = conv_in(I_sample) # size: (32, 32, embedding_dim, batch_size)
-        cond_in = conv_in(cond) # size: (32, 32, embedding_dim, batch_size)
+        I_sample, t_sample, cond = x # size I_sample: (32,32,1,batch_size)/(128,128,2,batch_size), t_sample: (1,1,1,batch_size), cond: (32,32,1,batch_size)/(128,128,2,batch_size)
+        I_sample_phys = Float32.(real.(ifft(I_sample, (1,2))))
+        cond_phys = Float32.(real.(ifft(cond,(1,2))))
+        
+        x = conv_in(I_sample_phys) # size: (32, 32, embedding_dim, batch_size)/(128,128,embedding_dim,batch_size)
+        cond_in = conv_in(cond_phys) # size: (32, 32, embedding_dim, batch_size)/(128,128,embedding_dim,batch_size)
         t_sample_embedded = t_embedding(t_sample) # size:(embedding_dim, batch_size)
 
-        @return u_net((x, t_sample_embedded, cond_in))
+        u_net_output_phys = u_net((x, t_sample_embedded, cond_in))
+        u_net_output_spectral = fft(u_net_output_phys, (1,2))
+
+        @return u_net_output_spectral
     end
 end
