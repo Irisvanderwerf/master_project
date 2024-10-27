@@ -16,12 +16,12 @@ dev = cpu_device() # gpu_device()
 nu = 5.0f-4; # Set the parameter value ν.
 
 # Create two different parameter sets for DNS and LES (K = resolution) K_{LES} < K_{DNS}
-params_les = create_params(64; nu);
-params_dns = create_params(128; nu);
+params_les = create_params(32; nu); # Grid: 64 x 64
+params_dns = create_params(64; nu); # Grid: 128 x 128
 
 t = 0.0f0; # Initial time t_0
 dt = 2.0f-4; # Time step Δt
-nt = 200; # Number of time steps (number of training and test samples)
+nt = 1000; # Number of time steps (number of training and test samples)
 
 v = zeros(Complex{Float32}, params_les.N, params_les.N, 2, nt + 1); # Array for Filtered DNS solution. 
 c = zeros(Complex{Float32}, params_les.N, params_les.N, 2, nt + 1); # Array for closure term. 
@@ -39,6 +39,7 @@ spectral_cutoff(u, K) = (2K)^2 / (size(u, 1) * size(u, 2)) * [
     u[1:K, 1:K, :] u[1:K, end-K+1:end, :]
     u[end-K+1:end, 1:K, :] u[end-K+1:end, end-K+1:end, :]
 ] 
+
 
 # Time stepping - Generating training&test data set: Filtered DNS (Initial distribution) - Closure term (Target distribution)
 anim = Animation()
@@ -84,7 +85,7 @@ ps_denoiser, st_denoiser = Lux.setup(Random.default_rng(), velocity_cnn); # |> d
 batch_size = 32;
 num_samples = size(c_train,4);
 num_batches = ceil(Int, num_samples / batch_size);
-num_epochs = 15;
+num_epochs = 50;
 
 # Define the Adam optimizer with a learning rate 
 opt_drift = Optimisers.setup(Adam(1.0e-3, (0.9f0, 0.99f0), 1e-10), ps_drift);
@@ -97,11 +98,7 @@ is_gaussian = false;
 train!(velocity_cnn, ps_drift, st_drift, opt_drift, ps_denoiser, st_denoiser, opt_denoiser, num_epochs, batch_size, v_train, c_train, v_train, num_batches, dev, is_gaussian, "trained_models");
 
 # Load the model for generating the closure term.
-if !is_gaussian
-    ps_drift, st_drift, opt_drift, ps_denoiser, st_denoiser, opt_denoiser = load_model("trained_models/final_model.bson");
-else
-    ps_drift, st_drift, opt_drift = load_model("trained_models/final_model.bson");
-end
+ps_drift, st_drift, opt_drift, ps_denoiser, st_denoiser, opt_denoiser = load_model("trained_models/final_model.bson");
 
 # Set to test mode
 _st_drift = Lux.testmode(st_drift);
@@ -121,28 +118,37 @@ batch_size = 1;
 u_test = random_field(params_dns);
 nburn = 500; 
 for i = 1:nburn
-    u_test = step_rk4(u_test, params_dns, dt);
+    u_test = step_rk4(u_test, params_dns, dt); # size: (128,128,2,1) - GPU
 end 
 # Define the filtered DNS initial condition. 
 ubar_test = spectral_cutoff(u_test, params_les.K);
-ubar_test = reshape(ubar_test, 128, 128, 2, batch_size); 
+ubar_test = reshape(ubar_test, 64, 64, 2, batch_size); # size: (128,128,2,1) - GPU
+u_les = ubar_test;
 
 anim = Animation()
 for i = 1:nt+1
+    global u_les, ubar_test
     if i > 1
-        u_les = step_rk4(ubar_test, params_les, dt) |> dev # size: (128,128,2,1)
-        closure = generate_closure(ubar_test, ubar_test, batch_size, step_size, ps_drift, _st_drift, ps_denoiser, _st_denoiser, velocity_cnn, dev, is_gaussian)
-        closure = closure |> dev # size: (128,128,2,1)
-        println("size of the closure: ", size(closure))
-        ubar_test = u_les .+ closure
+        u_les = step_rk4(ubar_test, params_les, dt) # size: (128,128,2,1) - GPU
+        u_les = Array(u_les) # size: (128,128,2,1) - CPU
+        closure = generate_closure(ubar_test, ubar_test, batch_size, step_size, ps_drift, _st_drift, ps_denoiser, _st_denoiser, velocity_cnn, dev, is_gaussian) # size: (128,128,2,1) - CPU
+        # Perform element-wise addition for the next ubar_test
+        ubar_test = u_les .+ closure # size: (128,128,2,1) - CPU
+        ubar_test = CuArray(ubar_test) # size: (128,128,2,1) - GPU
         t += dt
+        println("Finished time step ", i)
     end
+
     if i % 10 == 0
-        ω_les = Array(vorticity(ubar_test, params_les))
-        title_les = @sprintf("Vorticity (LES + closure), t = %.3f", t)
-        p2 = heatmap(ω_les'; xlabel = "x", ylabel = "y", title = title_les, color=:viridis)
-        fig = plot(p2, layout = (1, 1), size=(400, 400))  # Combine both plots
+        t = (i - 1) * dt
+        ω_model = Array(vorticity(ubar_test, params_les))[:,:,1] # size: (128,128)
+        ω_nomodel = Array(vorticity(CuArray(u_les), params_les))[:,:,1] # size: (128,128)
+        title_model = @sprintf("Vorticity model, t = %.3f", t)
+        title_nomodel = @sprintf("Vorticity no model, t=%.3f", t)
+        p1 = heatmap(ω_nomodel'; xlabel = "x", ylabel="y", title=title_nomodel)
+        p2 = heatmap(ω_model'; xlabel = "x", ylabel = "y", title = title_model)
+        fig = plot(p1, p2, layout = (1, 2), size=(800, 400))  # Combine both plots
         frame(anim, fig)  # Add frame to animation
     end
 end
-gif(anim, "voritcity_comparison_animation.gif")
+gif(anim, "voritcity_closuremodel.gif")

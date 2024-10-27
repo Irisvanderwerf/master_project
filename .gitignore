@@ -4,6 +4,7 @@
 /Manifest.toml
 /docs/Manifest.toml
 /docs/build/
+/trained_models
 
 
 # ignore .vscode
