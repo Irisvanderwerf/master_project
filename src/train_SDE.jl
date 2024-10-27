@@ -142,7 +142,17 @@ function train!(velocity_cnn, ps_drift, st_drift, opt_drift, ps_denoiser, st_den
         save_model("$save_path/final_model.bson", ps_drift, st_drift, opt_drift, ps_denoiser, st_denoiser, opt_denoiser)
     else
         save_model("$save_path/final_model.bson", ps_drift, st_drift, opt_drift)
+
     end
+
+    # Save the model at the end of the full training process
+    println("Training completed. Saving the final model.")
+    if !is_gaussian
+        save_model("$save_path/final_model.bson", ps_drift, st_drift, opt_drift, ps_denoiser, st_denoiser, opt_denoiser)
+    else
+        save_model("$save_path/final_model.bson", ps_drift, st_drift, opt_drift)
+    end
+
 
     return ps_drift, st_drift, ps_denoiser, st_denoiser
     if !is_gaussian

@@ -50,6 +50,7 @@ ps_denoiser, st_denoiser = Lux.setup(Random.default_rng(), velocity_cnn); # |> d
 batch_size = 32;
 num_batches = ceil(Int, num_samples / batch_size);
 num_epochs = 15;
+num_epochs = 15;
 
 # Define the Adam optimizer with a learning rate (1e-6)
 opt_drift = Optimisers.setup(Adam(1.0e-3, (0.9f0, 0.99f0), 1e-10), ps_drift);
@@ -62,7 +63,7 @@ opt_denoiser = Optimisers.setup(Adam(1.0e-3, (0.9f0, 0.99f0), 1e-10), ps_denoise
 is_gaussian = true;
 
 # Start training
-train!(velocity_cnn, ps_drift, st_drift, opt_drift, ps_denoiser, st_denoiser, opt_denoiser, num_epochs, batch_size, train_gaussian_images, train_images_filtered, label_images_32x32, num_batches, dev, is_gaussian, "trained_model_NS");
+train!(velocity_cnn, ps_drift, st_drift, opt_drift, ps_denoiser, st_denoiser, opt_denoiser, num_epochs, batch_size, train_gaussian_images, train_images_filtered, label_images_32x32, num_batches, dev, is_gaussian, "trained_models");
 
 # Load the model for generating the digits
 if !is_gaussian
