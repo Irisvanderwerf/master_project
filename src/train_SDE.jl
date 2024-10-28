@@ -79,7 +79,7 @@ function train!(velocity_cnn, ps_drift, st_drift, opt_drift, ps_denoiser, st_den
             # Sample time t from a uniform distribution between 0 and 1
             t_sample = reshape(rand(Float32, batch_size), 1, 1, 1, batch_size) |> dev  # shape: (1, 1, 1, N_b)
             # Sample the noise for the stochastic interpolant
-            z_sample = randn(Float32, 128, 128, 2, batch_size) |> dev   # shape: (32,32,1,N_b)
+            z_sample = Float32.(randn(size(initial_sample))) |> dev   # shape: (32,32,1,N_b)
             
             ## Update the weights for the drift term ##
             # Define the loss function closure for gradient calculation
