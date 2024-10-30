@@ -50,15 +50,17 @@ end
 
 function loss_fn(velocity, dI_dt_sample)
     # Compute the loss
-    loss = velocity .^ 2 .- 2 .* (velocity .* dI_dt_sample)
+    # loss = velocity .^ 2 .- 2 .* (velocity .* dI_dt_sample)
+    # loss = sum((velocity - dI_dt_sample) .^ 2) # For real numbers
+    loss = sum(abs2, velocity - dI_dt_sample) # Loss function for imaginary numbers.
 
     # # Check for NaN or Inf in the loss using broadcasting
     # if any(isnan.(loss)) || any(isinf.(loss))
     #     println("Loss contains NaN or Inf")
     # end
 
-    mean_loss = mean(loss)
-    return mean_loss
+    # mean_loss = mean(loss)
+    return loss
 end
 
 function train!(velocity_cnn, ps_drift, st_drift, opt_drift, ps_denoiser, st_denoiser, opt_denoiser, num_epochs, batch_size, train_gaussian_images, train_images, train_labels, num_batches, dev, is_gaussian, save_path)
