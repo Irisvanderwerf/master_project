@@ -85,7 +85,7 @@ ps_denoiser, st_denoiser = Lux.setup(Random.default_rng(), velocity_cnn); # |> d
 batch_size = 32;
 num_samples = size(c_train,4);
 num_batches = ceil(Int, num_samples / batch_size);
-num_epochs = 50;
+num_epochs = 500;
 
 # Define the Adam optimizer with a learning rate 
 opt_drift = Optimisers.setup(Adam(1.0e-3, (0.9f0, 0.99f0), 1e-10), ps_drift);
@@ -97,8 +97,8 @@ is_gaussian = false;
 # Start training.
 train!(velocity_cnn, ps_drift, st_drift, opt_drift, ps_denoiser, st_denoiser, opt_denoiser, num_epochs, batch_size, v_train, c_train, v_train, num_batches, dev, is_gaussian, "trained_models");
 
-# Load the model for generating the closure term.
-ps_drift, st_drift, opt_drift, ps_denoiser, st_denoiser, opt_denoiser = load_model("trained_models/final_model.bson");
+# # Load the model for generating the closure term after closing the program. 
+# ps_drift, st_drift, opt_drift, ps_denoiser, st_denoiser, opt_denoiser = load_model("trained_models/final_model.bson");
 
 # Set to test mode
 _st_drift = Lux.testmode(st_drift);
@@ -107,22 +107,25 @@ _st_denoiser = Lux.testmode(st_denoiser);
 ### Time evolution where we start with filtered DNS solution ###
 t = 0.0f0; # Initial time t_0
 dt = 2.0f-4; # Time step Δt
-nt = 500; # Number of time steps (number of training and test samples)
+nt = 20; # Number of time steps (number of training and test samples)
 
 num_steps = 100;  # Number of steps to evolve the image
 step_size = 1.0 / num_steps;  # Step size (proportional to time step)
 batch_size = 1; 
 
-# Start with initial condition
-# Define initial condition for DNS. 
-u_test = random_field(params_dns);
-nburn = 500; 
-for i = 1:nburn
-    u_test = step_rk4(u_test, params_dns, dt); # size: (128,128,2,1) - GPU
-end 
-# Define the filtered DNS initial condition. 
-ubar_test = spectral_cutoff(u_test, params_les.K);
-ubar_test = reshape(ubar_test, 64, 64, 2, batch_size); # size: (128,128,2,1) - GPU
+# Start with initial conditio
+# # Define initial condition for DNS. 
+# u_test = random_field(params_dns);
+# nburn = 500; 
+# for i = 1:nburn
+#     u_test = step_rk4(u_test, params_dns, dt); # size: (128,128,2,1) - GPU
+# end 
+
+# # Define the filtered DNS initial condition. 
+ubar_test = v[:,:,:,1]; # To check if the network works use the same initial condition as the training set. 
+# ubar_test = spectral_cutoff(u_test, params_les.K);
+ubar_test = reshape(ubar_test, 64, 64, 2, batch_size); # size: (128,128,2,1) - GPU (if we generate random) or CPU (if we take the initial condition for the training)
+ubar_test = CuArray(ubar_test);
 u_les = ubar_test;
 
 anim = Animation()
@@ -139,7 +142,7 @@ for i = 1:nt+1
         println("Finished time step ", i)
     end
 
-    if i % 10 == 0
+    if i % 2 == 0
         t = (i - 1) * dt
         ω_model = Array(vorticity(ubar_test, params_les))[:,:,1] # size: (128,128)
         ω_nomodel = Array(vorticity(CuArray(u_les), params_les))[:,:,1] # size: (128,128)
@@ -151,4 +154,4 @@ for i = 1:nt+1
         frame(anim, fig)  # Add frame to animation
     end
 end
-gif(anim, "voritcity_closuremodel.gif")
+gif(anim, "voritcity_closuremodel.gif")  
