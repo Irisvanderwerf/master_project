@@ -52,7 +52,7 @@ function loss_fn(velocity, dI_dt_sample)
     # Compute the loss
     # loss = velocity .^ 2 .- 2 .* (velocity .* dI_dt_sample)
     # loss = sum((velocity - dI_dt_sample) .^ 2) # For real numbers
-    loss = sum(abs2, velocity - dI_dt_sample) # Loss function for imaginary numbers.
+    loss = mean(abs2, velocity - dI_dt_sample) # Loss function for imaginary numbers.
 
     # # Check for NaN or Inf in the loss using broadcasting
     # if any(isnan.(loss)) || any(isinf.(loss))

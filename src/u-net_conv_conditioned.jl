@@ -10,7 +10,7 @@ function sinusoidal_embedding(x, min_freq::AbstractFloat, max_freq::AbstractFloa
     upper = log(max_freq)
     n = div(embedding_dims, 2)
     d = (upper - lower) / (n - 1)
-    freqs = exp.(lower:d:upper) # |> gpu_device()
+    freqs = exp.(lower:d:upper) |> gpu_device()
     
     angular_speeds = reshape(2.0f0 * π * freqs, (1, 1, length(freqs), 1))
     

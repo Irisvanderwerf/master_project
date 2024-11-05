@@ -6,11 +6,13 @@ using ComponentArrays
 using Optimisers
 using Statistics
 using Plots
-using CUDA
+using LuxCUDA
 using Printf
 
+# #### TRAINING ####
+
 # Choose CPU or GPU
-dev = cpu_device() # gpu_device()
+dev = gpu_device()
 
 ### Generate data - Incompressible Navier Stokes equations: filtered DNS & LES state & closure terms ### 
 nu = 5.0f-4; # Set the parameter value ν.
@@ -21,16 +23,18 @@ params_dns = create_params(64; nu); # Grid: 128 x 128
 
 t = 0.0f0; # Initial time t_0
 dt = 2.0f-4; # Time step Δt
-nt = 1000; # Number of time steps (number of training and test samples)
+nt = 5000; # Number of time steps (number of training and test samples)
 
-v = zeros(Complex{Float32}, params_les.N, params_les.N, 2, nt + 1); # Array for Filtered DNS solution. 
-c = zeros(Complex{Float32}, params_les.N, params_les.N, 2, nt + 1); # Array for closure term. 
+# GPU version
+v = zeros(Complex{Float32}, params_les.N, params_les.N, 2, nt + 1) |> dev;
+c = zeros(Complex{Float32}, params_les.N, params_les.N, 2, nt + 1) |> dev;
 
 # Define initial condition for DNS. 
-u = random_field(params_dns);
+u = random_field(params_dns) |> dev;
 nburn = 500; # number of steps to stabilize the simulation before collecting data, creating a stable/realistic initial condition.
 # create the initial condition.
 for i = 1:nburn
+    global u
     u = step_rk4(u, params_dns, dt)
 end 
 
@@ -40,12 +44,13 @@ spectral_cutoff(u, K) = (2K)^2 / (size(u, 1) * size(u, 2)) * [
     u[end-K+1:end, 1:K, :] u[end-K+1:end, end-K+1:end, :]
 ] 
 
-
 # Time stepping - Generating training&test data set: Filtered DNS (Initial distribution) - Closure term (Target distribution)
 anim = Animation()
 for i = 1:nt+1
     # First compute the filtered DNS & closure term for the initial condition.
     if i > 1  
+        global t
+        global u
         t += dt
         u = step_rk4(u, params_dns, dt) # DNS solution
     end 
@@ -70,22 +75,22 @@ end
 gif(anim, "voritcity_comparison_animation.gif")
 
 # Transform the v and c to set as correct pairs for the training process.
-v_train = v[:,:,:,1:nt];
-c_train = c[:,:,:,2:nt+1];
+v_train = Array(v[:,:,:,1:nt]) |> dev; 
+c_train = Array(c[:,:,:,2:nt+1]) |> dev;
 
 # Define the network - u-net with ConvNextBlocks 
 velocity_cnn = build_full_unet(16,[32,64,128],8);
 
 # Initialize the network parameters and the state - ODE
-ps_drift, st_drift = Lux.setup(Random.default_rng(), velocity_cnn); # .|> dev;
+ps_drift, st_drift = Lux.setup(Random.default_rng(), velocity_cnn) |> dev;
 # Initialize the network parameters and the states (drift and score) - SDE
-ps_denoiser, st_denoiser = Lux.setup(Random.default_rng(), velocity_cnn); # |> dev;
+ps_denoiser, st_denoiser = Lux.setup(Random.default_rng(), velocity_cnn) |> dev;
 
 # Define the batch_size, num_batches, num_epochs
 batch_size = 32;
 num_samples = size(c_train,4);
 num_batches = ceil(Int, num_samples / batch_size);
-num_epochs = 500;
+num_epochs = 100;
 
 # Define the Adam optimizer with a learning rate 
 opt_drift = Optimisers.setup(Adam(1.0e-3, (0.9f0, 0.99f0), 1e-10), ps_drift);
@@ -94,11 +99,14 @@ opt_denoiser = Optimisers.setup(Adam(1.0e-3, (0.9f0, 0.99f0), 1e-10), ps_denoise
 # Is the initial data gaussian distributed?
 is_gaussian = false;
 
+println("Everything is completed and on the right device for the training")
+
 # Start training.
 train!(velocity_cnn, ps_drift, st_drift, opt_drift, ps_denoiser, st_denoiser, opt_denoiser, num_epochs, batch_size, v_train, c_train, v_train, num_batches, dev, is_gaussian, "trained_models");
 
-# # Load the model for generating the closure term after closing the program. 
-# ps_drift, st_drift, opt_drift, ps_denoiser, st_denoiser, opt_denoiser = load_model("trained_models/final_model.bson");
+#### USE TRAINED MODEL #####
+# Load the model for generating the closure term after closing the program. 
+ps_drift, st_drift, opt_drift, ps_denoiser, st_denoiser, opt_denoiser = load_model("trained_models/final_model.bson");
 
 # Set to test mode
 _st_drift = Lux.testmode(st_drift);

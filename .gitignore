@@ -5,6 +5,11 @@
 /docs/Manifest.toml
 /docs/build/
 /trained_models
+*.out
+*.err
+*.slurm
+*.bson
+
 
 
 # ignore .vscode
@@ -13,3 +18,5 @@
 # ignore data
 mnist_data/
 
+  git config --global user.email "you@example.com"
+  git config --global user.name "Your Name"
