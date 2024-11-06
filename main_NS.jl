@@ -27,7 +27,7 @@ params_dns = create_params(128; nu); # Grid: 256 x 256
 
 t = 0.0f0; # Initial time t_0
 dt = 2.0f-4; # Time step Δt
-nt = 1000; # Number of time steps (number of training and test samples)
+nt = 500; # Number of time steps (number of training and test samples)
 
 # GPU version
 v = zeros(Complex{Float32}, params_les.N, params_les.N, 2, nt + 1) |> dev;
