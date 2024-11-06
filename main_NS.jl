@@ -6,24 +6,28 @@ using ComponentArrays
 using Optimisers
 using Statistics
 using Plots
+gr()
+ENV["GKSwstype"] = "100"  # Avoids display issues in headless mode
 using LuxCUDA
 using Printf
+using CUDA
 
 # #### TRAINING ####
 
 # Choose CPU or GPU
 dev = gpu_device()
+CUDA.allowscalar(false)
 
 ### Generate data - Incompressible Navier Stokes equations: filtered DNS & LES state & closure terms ### 
 nu = 5.0f-4; # Set the parameter value ν.
 
 # Create two different parameter sets for DNS and LES (K = resolution) K_{LES} < K_{DNS}
-params_les = create_params(32; nu); # Grid: 64 x 64
-params_dns = create_params(64; nu); # Grid: 128 x 128
+params_les = create_params(16; nu); # Grid: 32 x 32
+params_dns = create_params(128; nu); # Grid: 256 x 256
 
 t = 0.0f0; # Initial time t_0
 dt = 2.0f-4; # Time step Δt
-nt = 5000; # Number of time steps (number of training and test samples)
+nt = 1000; # Number of time steps (number of training and test samples)
 
 # GPU version
 v = zeros(Complex{Float32}, params_les.N, params_les.N, 2, nt + 1) |> dev;
@@ -90,7 +94,7 @@ ps_denoiser, st_denoiser = Lux.setup(Random.default_rng(), velocity_cnn) |> dev;
 batch_size = 32;
 num_samples = size(c_train,4);
 num_batches = ceil(Int, num_samples / batch_size);
-num_epochs = 100;
+num_epochs = 300;
 
 # Define the Adam optimizer with a learning rate 
 opt_drift = Optimisers.setup(Adam(1.0e-3, (0.9f0, 0.99f0), 1e-10), ps_drift);
@@ -99,18 +103,17 @@ opt_denoiser = Optimisers.setup(Adam(1.0e-3, (0.9f0, 0.99f0), 1e-10), ps_denoise
 # Is the initial data gaussian distributed?
 is_gaussian = false;
 
-println("Everything is completed and on the right device for the training")
-
 # Start training.
 train!(velocity_cnn, ps_drift, st_drift, opt_drift, ps_denoiser, st_denoiser, opt_denoiser, num_epochs, batch_size, v_train, c_train, v_train, num_batches, dev, is_gaussian, "trained_models");
 
 #### USE TRAINED MODEL #####
 # Load the model for generating the closure term after closing the program. 
-ps_drift, st_drift, opt_drift, ps_denoiser, st_denoiser, opt_denoiser = load_model("trained_models/final_model.bson");
+# ps_drift, st_drift, opt_drift, ps_denoiser, st_denoiser, opt_denoiser = load_model("trained_models/final_model.bson");
+# ps_drift, st_drift, opt_drift, ps_denoiser, st_denoiser, opt_denoiser = ps_drift, st_drift, opt_drift, ps_denoiser, st_denoiser, opt_denoiser |> dev
 
 # Set to test mode
-_st_drift = Lux.testmode(st_drift);
-_st_denoiser = Lux.testmode(st_denoiser);
+_st_drift = Lux.testmode(st_drift) |> dev;
+_st_denoiser = Lux.testmode(st_denoiser) |> dev;
 
 ### Time evolution where we start with filtered DNS solution ###
 t = 0.0f0; # Initial time t_0
@@ -121,31 +124,32 @@ num_steps = 100;  # Number of steps to evolve the image
 step_size = 1.0 / num_steps;  # Step size (proportional to time step)
 batch_size = 1; 
 
-# Start with initial conditio
+# # Start with initial conditio
 # # Define initial condition for DNS. 
 # u_test = random_field(params_dns);
 # nburn = 500; 
 # for i = 1:nburn
+#     global u_test
 #     u_test = step_rk4(u_test, params_dns, dt); # size: (128,128,2,1) - GPU
 # end 
 
 # # Define the filtered DNS initial condition. 
 ubar_test = v[:,:,:,1]; # To check if the network works use the same initial condition as the training set. 
-# ubar_test = spectral_cutoff(u_test, params_les.K);
-ubar_test = reshape(ubar_test, 64, 64, 2, batch_size); # size: (128,128,2,1) - GPU (if we generate random) or CPU (if we take the initial condition for the training)
-ubar_test = CuArray(ubar_test);
+ubar_test = CuArray(reshape(ubar_test, 32, 32, 2, batch_size)); # size: (128,128,2,1) - GPU (if we generate random) or CPU (if we take the initial condition for the training)
 u_les = ubar_test;
 
 anim = Animation()
 for i = 1:nt+1
     global u_les, ubar_test
     if i > 1
-        u_les = step_rk4(ubar_test, params_les, dt) # size: (128,128,2,1) - GPU
-        u_les = Array(u_les) # size: (128,128,2,1) - CPU
-        closure = generate_closure(ubar_test, ubar_test, batch_size, step_size, ps_drift, _st_drift, ps_denoiser, _st_denoiser, velocity_cnn, dev, is_gaussian) # size: (128,128,2,1) - CPU
+        global t
+        u_les = step_rk4(ubar_test, params_les, dt) |> dev # size: (128,128,2,1) - GPU
+        # u_les = CuArray(u_les) # size: (128,128,2,1) - CPU
+        closure = generate_closure(ubar_test, ubar_test, batch_size, step_size, ps_drift, _st_drift, ps_denoiser, _st_denoiser, velocity_cnn, dev, is_gaussian) |> dev # size: (128,128,2,1) - CPU
+        println("The closure is generated for the first time step and of type: ", typeof(closure))
         # Perform element-wise addition for the next ubar_test
-        ubar_test = u_les .+ closure # size: (128,128,2,1) - CPU
-        ubar_test = CuArray(ubar_test) # size: (128,128,2,1) - GPU
+        ubar_test = u_les .+ closure |> dev # size: (128,128,2,1) - CPU
+        # ubar_test = CuArray(ubar_test) # size: (128,128,2,1) - GPU
         t += dt
         println("Finished time step ", i)
     end

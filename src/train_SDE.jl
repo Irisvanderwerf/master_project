@@ -17,14 +17,14 @@ end
 # Function to load the model parameters and optimizer states
 function load_model(file_path)
     data = BSON.load(file_path)
-    ps_drift = data[:ps_drift]
-    st_drift = data[:st_drift]
+    ps_drift = data[:ps_drift] |> gpu_device()
+    st_drift = data[:st_drift] |> gpu_device()
     opt_drift = data[:opt_drift]
 
     if haskey(data, :ps_denoiser)
-        ps_denoiser = data[:ps_denoiser]
-        st_denoiser = data[:st_denoiser]
-        opt_denoiser = data[:opt_denoiser]
+        ps_denoiser = data[:ps_denoiser] |> gpu_device()
+        st_denoiser = data[:st_denoiser] |> gpu_device()
+        opt_denoiser = data[:opt_denoiser] 
         println("Loaded model and optimizer states (drift and denoiser) from $file_path")
         return ps_drift, st_drift, opt_drift, ps_denoiser, st_denoiser, opt_denoiser
     else
@@ -53,6 +53,7 @@ function loss_fn(velocity, dI_dt_sample)
     # loss = velocity .^ 2 .- 2 .* (velocity .* dI_dt_sample)
     # loss = sum((velocity - dI_dt_sample) .^ 2) # For real numbers
     loss = mean(abs2, velocity - dI_dt_sample) # Loss function for imaginary numbers.
+    # Changed sum to mean --> smaller loss values. 
 
     # # Check for NaN or Inf in the loss using broadcasting
     # if any(isnan.(loss)) || any(isinf.(loss))
