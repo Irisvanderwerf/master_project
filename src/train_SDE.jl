@@ -33,14 +33,6 @@ function load_model(file_path)
     end
 end
 
-# function get_minibatch_MNIST(images, batch_size, batch_index)
-#     start_index = (batch_index - 1) * batch_size + 1
-#     end_index = min(batch_index * batch_size, size(images,1))
-#     minibatch = images[start_index:end_index,:,:,:]
-#     minibatch = permutedims(minibatch, (2,3,4,1))
-#     return minibatch # Shape: (32, 32, 1, N_b) 
-# end
-
 function get_minibatch_NS(images, batch_size, batch_index)
     start_index = (batch_index - 1) * batch_size + 1
     end_index = min(batch_index * batch_size, size(images, 4))  # Adjusted for 4th dimension
@@ -51,22 +43,26 @@ end
 function loss_fn(velocity, dI_dt_sample)
     # Compute the loss
     # loss = velocity .^ 2 .- 2 .* (velocity .* dI_dt_sample)
-    # loss = sum((velocity - dI_dt_sample) .^ 2) # For real numbers
+    # loss = mean((velocity - dI_dt_sample) .^ 2) # For real numbers
     loss = mean(abs2, velocity - dI_dt_sample) # Loss function for imaginary numbers.
-    # Changed sum to mean --> smaller loss values. 
-
-    # # Check for NaN or Inf in the loss using broadcasting
-    # if any(isnan.(loss)) || any(isinf.(loss))
-    #     println("Loss contains NaN or Inf")
-    # end
 
     # mean_loss = mean(loss)
     return loss
 end
 
 function train!(velocity_cnn, ps_drift, st_drift, opt_drift, ps_denoiser, st_denoiser, opt_denoiser, num_epochs, batch_size, train_gaussian_images, train_images, train_labels, num_batches, dev, is_gaussian, save_path)
+    init_learning_rate = 1.0e-3;
+    min_learning_rate = 1.0e-6;
+
     for epoch in 1:num_epochs
         println("Epoch $epoch")
+        # The learning rate scheduler.
+        new_learning_rate = min_learning_rate .+ 0.5f0 .* (init_learning_rate - min_learning_rate) .* (1 .+ cos.(epoch ./ num_epochs .* π));
+
+        Optimisers.adjust!(opt_drift, new_learning_rate)
+        if !is_gaussian
+            Optimisers.adjust!(opt_denoiser, new_learning_rate)
+        end
 
         epoch_drift_loss = 0.0
         if !is_gaussian
