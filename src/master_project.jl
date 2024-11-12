@@ -79,6 +79,8 @@ export get_minibatch_NS
 export train!
 export save_model
 export load_model
+export initialize_or_load_model
+export compute_mean_error
 
 # # Add functions for generating a digit - ODE
 # export forward_euler
