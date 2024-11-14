@@ -5,18 +5,18 @@ using BSON
 using CUDA
 using LuxCUDA
 
-function initialize_or_load_model(model_name::String, is_gaussian::Bool, load_path::Union{String, Nothing} = nothing)
+function initialize_or_load_model(model_name::String, is_gaussian::Bool, network::Any, dev, load_path::Union{String, Nothing} = nothing)
     if isnothing(load_path)
         # Initialize new models
         println("Initializing new models with name: $model_name")
         
         # Drift term initialization
-        ps_drift, st_drift = Lux.setup(Random.default_rng(), velocity_cnn) |> dev
+        ps_drift, st_drift = Lux.setup(Random.default_rng(), network) |> dev
         opt_drift = Optimisers.setup(Adam(1.0e-3, (0.9f0, 0.99f0), 1e-10), ps_drift)
 
         if !is_gaussian
             # Denoiser term initialization
-            ps_denoiser, st_denoiser = Lux.setup(Random.default_rng(), velocity_cnn) |> dev
+            ps_denoiser, st_denoiser = Lux.setup(Random.default_rng(), network) |> dev
             opt_denoiser = Optimisers.setup(Adam(1.0e-3, (0.9f0, 0.99f0), 1e-10), ps_denoiser)
         else
             ps_denoiser, st_denoiser, opt_denoiser = nothing, nothing, nothing
@@ -29,7 +29,6 @@ function initialize_or_load_model(model_name::String, is_gaussian::Bool, load_pa
 
     return ps_drift, st_drift, opt_drift, ps_denoiser, st_denoiser, opt_denoiser, model_name
 end
-
 
 # Function to load model parameters and optimizer states with structure checks
 function load_model(file_path, is_gaussian)

@@ -11,7 +11,8 @@ include("train_SDE.jl")
 include("generate_digit_SDE.jl")
 # include("u-net_residual.jl")
 # include("u-net_conv.jl")
-include("u-net_conv_conditioned.jl")
+# include("u-net_conv_conditioned.jl")
+include("u-net_conv_conditioned_complex.jl")
 
 # Add functions for Navier Stokes simulations
 export Q
@@ -60,7 +61,14 @@ export time_derivative_stochastic_interpolant
 # export UNet
 # export build_full_unet
 
-# Add functions for third u-net - conditioning
+# # Add functions for third u-net - conditioning
+# export sinusoidal_embedding
+# export ConvNextBlock_up
+# export ConvNextBlock_down
+# export UNet
+# export build_full_unet
+
+# Add functions for fourth u-net - conditioning & handle complex and real numbers seperately 
 export sinusoidal_embedding
 export ConvNextBlock_up
 export ConvNextBlock_down
