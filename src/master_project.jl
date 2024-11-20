@@ -5,15 +5,16 @@ include("data_navierstokes.jl")
 include("data_mnist.jl")
 include("stochastic_interpolant.jl")
 # include("cnn.jl")
-# include("train_ODE.jl")
-include("train_SDE.jl")
-# include("generate_digit_ODE.jl")
-include("generate_digit_SDE.jl")
+include("train_ODE.jl")
+# include("train_SDE.jl")
+include("generate_digit_ODE.jl")
+# include("generate_digit_SDE.jl")
 # include("u-net_residual.jl")
 # include("u-net_conv.jl")
-include("u-net_conv_conditioned.jl")
+# include("u-net_conv_conditioned.jl")
+include("u-net_conv_conditioned_complex.jl")
 
-# Add functions for Navier Stokes simulations
+# Add functions for Navier Stokes simulations - spectral decomposition 
 export Q
 export F
 export project
@@ -24,6 +25,10 @@ export create_spectrum
 export random_field
 export create_params
 export zeros
+export standardize_training_set_per_channel
+export inverse_standardize_per_channel
+
+# Add functions for Navier Stokes simulations - finite volume method. 
 
 # Add functions for data 
 export reshape_mnist_data
@@ -60,43 +65,41 @@ export time_derivative_stochastic_interpolant
 # export UNet
 # export build_full_unet
 
-# Add functions for third u-net - conditioning
+# Add functions for third u-net - conditioning (+ complex)
 export sinusoidal_embedding
 export ConvNextBlock_up
 export ConvNextBlock_down
 export UNet
 export build_full_unet
 
-# # Add fucntions for training - ODE
-# export loss_fn
-# export get_minibatch
-# export train!
-
-# Add functions for training - SDE
+# Add functions for training - ODE or SDE
 export loss_fn
 # export get_minibatch_MNIST
 export get_minibatch_NS
 export train!
 export save_model
 export load_model
+export initialize_or_load_model
 
 # # Add functions for generating a digit - ODE
-# export forward_euler
-# export runge_kutta_4
-# export generate_digit
-# export plot_generated_digits
-
-# Add functions for generating a digit - SDE
-export gamma
-export alpha
-export beta
-export derivative_alpha
-export derivative_beta
-export epsilon
-export euler_maruyama
+export forward_euler
+export runge_kutta_4
 export generate_digit
+export plot_generated_digits
 export generate_closure
-export compute_score_denoiser
-export compute_score_velocity
+export compute_max_min_MSE
+
+# # Add functions for generating a digit - SDE
+# export gamma
+# export alpha
+# export beta
+# export derivative_alpha
+# export derivative_beta
+# export epsilon
+# export euler_maruyama
+# export generate_digit
+# export generate_closure
+# export compute_score_denoiser
+# export compute_score_velocity
 
 end

@@ -187,3 +187,32 @@ function create_params(
 
     (; x, N, K, Kf, k, nu, normk, f, Pxx, Pxy, Pyy, m, θ)
 end
+
+function standardize_training_set_per_channel(training_set)
+    # Initialize standardized training set
+    standardized_set = similar(training_set)
+
+    # Compute mean and standard deviation for each channel
+    means = [mean(training_set[:, :, c, :]) for c in 1:2]
+    stds = [std(training_set[:, :, c, :]) for c in 1:2]
+
+    # Standardize each channel separately
+    for c in 1:2
+        standardized_set[:, :, c, :] .= (training_set[:, :, c, :] .- means[c]) ./ stds[c]
+    end
+
+    return standardized_set, means, stds
+end
+
+function inverse_standardize_per_channel(standardized_set, means, stds)
+    # Initialize the reconstructed training set
+    original_set = similar(standardized_set)
+
+    # Revert standardization for each channel independently
+    for c in 1:2
+        original_set[:, :, c, :] .= (standardized_set[:, :, c, :] .* stds[c]) .+ means[c]
+    end
+
+    return original_set
+end
+
