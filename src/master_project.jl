@@ -75,10 +75,15 @@ export ConvNextBlock_down
 export UNet
 export build_full_unet
 
-# # Add fucntions for training - ODE
+# # # Add fucntions for training - ODE
 # export loss_fn
-# export get_minibatch
+# export get_minibatch_NS
+# # export get_minibatch_MNIST
 # export train!
+# export initialize_or_load_model
+# export save_model
+# export load_model
+
 
 # Add functions for training - SDE
 export loss_fn
@@ -95,6 +100,7 @@ export compute_mean_error
 # export runge_kutta_4
 # export generate_digit
 # export plot_generated_digits
+# export generate_closure
 
 # Add functions for generating a digit - SDE
 export gamma

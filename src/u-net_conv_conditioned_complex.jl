@@ -230,12 +230,12 @@ function build_full_unet(embedding_dim = 8, hidden_channels = [16, 32, 64], t_pa
     ) do x
         I_sample, t_sample, cond = x # size I_sample: (32,32,1,batch_size)/(128,128,2,batch_size), t_sample: (1,1,1,batch_size), cond: (32,32,1,batch_size)/(128,128,2,batch_size)
         I_sample_phys = ifft(I_sample, (1,2))
-        I_sample_real, I_sample_imag = real(I_sample_phys), imag(I_sample_phys)
+        I_sample_real, I_sample_imag = Float32.(real(I_sample_phys)), Float32.(imag(I_sample_phys))
         I_sample_real_stand = (I_sample_real .- mean(I_sample_real)) ./ std(I_sample_real)
         I_sample_imag_stand = (I_sample_imag .- mean(I_sample_imag)) ./ std(I_sample_imag)
 
         cond_phys = ifft(cond, (1,2))
-        cond_real, cond_imag = real(cond_phys), imag(cond_phys)
+        cond_real, cond_imag = Float32.(real(cond_phys)), Float32.(imag(cond_phys))
         cond_real_stand = (cond_real .- mean(cond_real)) ./ std(cond_real)
         cond_imag_stand = (cond_imag .- mean(cond_imag)) ./ std(cond_imag)
         
@@ -247,7 +247,7 @@ function build_full_unet(embedding_dim = 8, hidden_channels = [16, 32, 64], t_pa
         t_sample_embedded = t_embedding(t_sample) # size:(embedding_dim, batch_size)
 
         u_net_output_real = u_net((x_real, t_sample_embedded, cond_in_real))
-        u_net_output_imag = u_net((x_imag, t_sample_embedded, cond_in_imag))
+        u_net_output_imag = u_net((x_imag, t_sample_embedded, cond_in_imag)) 
 
         # Combine real and imaginary outputs back into a complex result
         u_net_output_phys = u_net_output_real .+ im .* u_net_output_imag

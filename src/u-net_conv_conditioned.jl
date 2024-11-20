@@ -233,6 +233,7 @@ function build_full_unet(embedding_dim = 8, hidden_channels = [16, 32, 64], t_pa
         I_sample_phys = (I_sample_phys .- mean(I_sample_phys)) ./ std(I_sample_phys) # normalization in physical space.
         
         cond_phys = Float32.(real.(ifft(cond,(1,2))))
+        cond_phys = (cond_phys .- mean(cond_phys)) ./ std(cond_phys)
         
         x = conv_in(I_sample_phys) # size: (32, 32, embedding_dim, batch_size)/(128,128,embedding_dim,batch_size)
         cond_in = conv_in(cond_phys) # size: (32, 32, embedding_dim, batch_size)/(128,128,embedding_dim,batch_size)

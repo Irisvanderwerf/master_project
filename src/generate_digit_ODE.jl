@@ -5,8 +5,8 @@ function forward_euler(velocity_cnn, ps, st, images, label, t, dt, batch_size, d
     # Reshape t_sample to match the batch size
     t_sample = Float32.(fill(t, (1, 1, 1, batch_size))) |> dev
 
-    # Ensure images are Float32
-    images = Float32.(images)
+    # # Ensure images are Float32 - not if you use complex numbers. 
+    # images = Float32.(images)
 
     # Predict the velocity field using the neural network
     velocity, st = Lux.apply(velocity_cnn, (images, t_sample, label), ps, st)
@@ -46,7 +46,7 @@ function runge_kutta_4(velocity_cnn, ps, st, images, label,  t, dt, batch_size, 
     return updated_images, st
 end
 
-# Main  function to generate digits
+# Main function to generate digits
 function generate_digit(velocity_cnn, ps, st, initial_gaussian_image, label, num_steps, batch_size, dev; method=:rk4)
     images = Float32.(initial_gaussian_image)  # Ensure initial images are Float32
     label = fill(label, 32, 32, 1, batch_size) # Set to proper size for the conditioning 
@@ -71,6 +71,50 @@ function generate_digit(velocity_cnn, ps, st, initial_gaussian_image, label, num
 
     # Maybe add clamping 
     return images # clamp.(images, 0.0, 1.0)
+end
+
+# generate the closure 
+function generate_closure(velocity_cnn, ps, st, label, num_steps, batch_size, dev; method=:rk4)
+    images = randn(Float32, 32, 32, 2, batch_size)  # Ensure initial images are Float32
+    
+    t_range = LinRange(0, 1, num_steps)
+    dt = t_range[2] - t_range[1]
+
+    # Simulate forward evolution over time from t = 0 to t = 1
+    for i in 1:num_steps-1
+        # Compute the current time t in the interval [0, 1]
+        t = t_range[i]
+        
+        # Choose the integration method
+        if method == :euler
+            images, st = forward_euler(velocity_cnn, ps, st, images, label, t, dt, batch_size, dev)
+        elseif method == :rk4
+            images, st = runge_kutta_4(velocity_cnn, ps, st, images, label, t, dt, batch_size, dev)
+        else
+            error("Unknown method: $method. Use :euler or :rk4.")
+        end
+    end
+
+    # Maybe add clamping 
+    return images
+end
+
+function compute_mae(real, predicted)
+    return mean(abs.(real .- predicted))
+end
+
+# Function to calculate the average MSE across the whole dataset. 
+function compute_average_mse(training_data, predictions)
+    total_error = 0.0
+    num_batches = size(training_data, 4)  # Assuming batch dimension is 4
+
+    for i in 1:num_batches
+        real = training_data[:, :, :, i]
+        pred = predictions[:, :, :, i]
+        total_error += compute_mse(real, pred)
+    end
+
+    return total_error / num_batches
 end
 
 ### Plot multiple generated images ###

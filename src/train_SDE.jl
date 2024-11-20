@@ -107,7 +107,7 @@ end
 
 function train!(velocity_cnn, ps_drift, st_drift, opt_drift, ps_denoiser, st_denoiser, opt_denoiser, num_epochs, batch_size, train_gaussian_images, train_images, train_labels, num_batches, dev, is_gaussian, model_name, save_path)
     init_learning_rate = 1.0e-3
-    min_learning_rate = 1.0e-6
+    min_learning_rate = 1.0e-7
 
     for epoch in 1:num_epochs
         println("Epoch $epoch")
