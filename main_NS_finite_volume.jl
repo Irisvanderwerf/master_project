@@ -37,14 +37,18 @@ t = 0.0f0; # Initial time t_0
 dt = 2.0f-4; # Time step Δt
 nt = 5000; # Number of time steps (number of training and test samples)
 create_right_hand_side(setup, psolver) = function right_hand_side(u, p, t)
-    u = eachslice(u; dims = ndims(u))
-    u = (u...,)
-    u = stack(u)
-    u = INS.apply_bc_u(u, t, setup)
+    # u = eachslice(u; dims = ndims(u))
+    # u = (u...,)
+    # u = stack(u)
+    # u = INS.apply_bc_u(u, t, setup)
+    u = pad_circular(u, 1; dims = 1:2)
     F = INS.momentum(u, nothing, t, setup)
-    F = INS.apply_bc_u(F, t, setup; dudt = true)
+    F = F[2:end-1, 2:end-1, :]
+    # F = INS.apply_bc_u(F, t, setup; dudt = true)
+    F = pad_circular(F, 1; dims = 1:2)
+
     PF = INS.project(F, setup; psolver)
-    stack(PF)
+    stack(PF)[2:end-1, 2:end-1, :]
 end
 
 
@@ -52,44 +56,46 @@ end
 x = LinRange(0.0, 1.0, N_dns + 1), LinRange(0.0, 1.0, N_dns + 1);
 setup = INS.Setup(; x, Re);
 ustart = INS.random_field(setup, 0.0);
+ustart = ustart[2:end-1, 2:end-1, :]
 psolver = INS.psolver_spectral(setup);
 
-x_les = LinRange(0.0, 1.0, N_les-1), LinRange(0.0, 1.0, N_les-1);
+x_les = LinRange(0.0, 1.0, N_les+1), LinRange(0.0, 1.0, N_les+1);
 setup_les = INS.Setup(; x=x_les, Re);
 psolver_les = INS.psolver_spectral(setup_les);
 
 # SciML-compatible right hand side function
 # Note: Requires `stack(u)` to create one array
 f = create_right_hand_side(setup, psolver);
-f(ustart, nothing, 0.0)
+lol = f(ustart, nothing, 0.0)
 
-# # Solve the ODE using SciML
-# prob = ODEProblem(f, stack(ustart), (0.0, 1.0))
-# sol = solve(
-#     prob,
-#     Tsit5();
-#     # adaptive = false,
-#     dt = 1e-5,
-# )
-# sol.t
+# Solve the ODE using SciML
+prob = ODEProblem(f, stack(ustart), (0.0, 1.0))
+sol = solve(
+    prob,
+    Tsit5();
+    # adaptive = false,
+    dt = 1e-4,
+)
+sol.t
 
 # # Animate solution
 # let
 #     (; Iu) = setup.grid
 #     i = 1
-#     obs = Observable(sqrt.(sol.u[1][Iu[i], 1].^2 .+ sol.u[1][Iu[i], 2].^2))
+#     obs = sqrt.(sol.u[1][:, :, 1].^2 .+ sol.u[1][:, :, 2].^2)
 
 #     # obs[] = s
 
 #     fig = INS.heatmap(obs)
 #     fig |> display
 #     for u in sol.u
-#         obs[] = sqrt.(u[Iu[i], 1].^2 .+ u[Iu[i], 2].^2)
+#         obs = sqrt.(u[:, :, 1].^2 .+ u[:, :, 2].^2)
 #         # obs = 
 #         # fig |> display
 #         sleep(0.05)
 #     end
 # end
+
 
 # Initialize empty arrays for concatenating training data
 v_train = Array{Float32}[] |> dev
@@ -120,6 +126,7 @@ else
         # global u = random_field(params_dns) |> dev;
 
         global u = INS.random_field(setup, 0.0) |> dev;
+        u = u[2:end-1, 2:end-1, :]
         nburn = 500; # number of steps to stabilize the simulation before collecting data.
 
 
@@ -148,8 +155,8 @@ else
             # Generate visualizations every 10 steps
             if i % 100 == 0
                 
-                ω_dns = Array(INS.vorticity(u, setup))
-                ω_les = Array(INS.vorticity(ubar, setup_les))
+                ω_dns = Array(INS.vorticity(pad_circular(u, 1; dims = 1:2), setup))
+                ω_les = Array(INS.vorticity(pad_circular(ubar, 1; dims = 1:2), setup_les))
 
                 title_dns = @sprintf("Vorticity (DNS), t = %.3f", t)
                 title_les = @sprintf("Vorticity (Filtered DNS), t = %.3f", t)
