@@ -81,7 +81,7 @@ function project(u, params)
 end
 
 # The following function performsone RK4 time step. 
-function step_rk4(u0, params, dt)
+function step_rk4(u0, dt, F)
     a = (
         (0.5f0,),
         (0.0f0, 0.5f0),
@@ -91,7 +91,8 @@ function step_rk4(u0, params, dt)
     u = u0
     k = ()
     for i = 1:length(a)
-        ki = project(F(u, params), params)
+        # ki = project(F(u, params), params)
+        ki = F(u, nothing, 0.0)
         k = (k..., ki)
         u = u0
         for j = 1:i

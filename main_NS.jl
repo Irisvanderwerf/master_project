@@ -13,11 +13,12 @@ using Printf
 using CUDA
 using Serialization  # For binary serialization of arrays
 using FileIO  # Optional: For using .jld2 file format if you prefer HDF5-style
+using IncompressibleNavierStokes
 
 #### TRAINING ####
 # Choose device: CPU or GPU
 dev = gpu_device()
-CUDA.allowscalar(false) 
+CUDA.allowscalar(false)
 
 ### Generate data - Incompressible Navier Stokes equations: filtered DNS & LES state & closure terms ### 
 nu = 5.0f-4; # Set the parameter value ν.
