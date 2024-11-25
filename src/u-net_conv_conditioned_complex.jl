@@ -5,12 +5,15 @@ using LuxCUDA
 using FFTW
 
 # Sinusoidal embedding for the time
-function sinusoidal_embedding(x, min_freq::AbstractFloat, max_freq::AbstractFloat, embedding_dims::Int)
+function sinusoidal_embedding(x, min_freq::AbstractFloat,
+     max_freq::AbstractFloat,
+      embedding_dims::Int,
+       dev)
     lower = log(min_freq)
     upper = log(max_freq)
     n = div(embedding_dims, 2)
     d = (upper - lower) / (n - 1)
-    freqs = exp.(lower:d:upper) |> gpu_device()
+    freqs = exp.(lower:d:upper) |> dev
     
     angular_speeds = reshape(2.0f0 * π * freqs, (1, 1, length(freqs), 1))
     
@@ -216,12 +219,12 @@ function UNet(
 end
 
 # Full U-Net model with time embedding
-function build_full_unet(embedding_dim = 8, hidden_channels = [16, 32, 64], t_pars_embedding_dim = 8)
+function build_full_unet(embedding_dim = 8, hidden_channels = [16, 32, 64], t_pars_embedding_dim = 8; dev)
     return @compact(
         conv_in = Conv((3, 3), 2 => embedding_dim, leakyrelu, pad=(1,1)),
         u_net = UNet(embedding_dim, 2, hidden_channels, embedding_dim, embedding_dim), 
         t_embedding = Chain(
-            t -> sinusoidal_embedding(t, 1.0f0, 1000.0f0, t_pars_embedding_dim),
+            t -> sinusoidal_embedding(t, 1.0f0, 1000.0f0, t_pars_embedding_dim, dev),
             Lux.Dense(t_pars_embedding_dim => embedding_dim),
             NNlib.gelu,
             Lux.Dense(embedding_dim => embedding_dim),
@@ -231,16 +234,12 @@ function build_full_unet(embedding_dim = 8, hidden_channels = [16, 32, 64], t_pa
         I_sample, t_sample, cond = x # size I_sample: (32,32,1,batch_size)/(128,128,2,batch_size), t_sample: (1,1,1,batch_size), cond: (32,32,1,batch_size)/(128,128,2,batch_size)
         I_sample_phys = ifft(I_sample, (1,2))
         I_sample_real, I_sample_imag = Float32.(real(I_sample_phys)), Float32.(imag(I_sample_phys))
-        I_sample_real_stand = (I_sample_real .- mean(I_sample_real)) ./ std(I_sample_real)
-        I_sample_imag_stand = (I_sample_imag .- mean(I_sample_imag)) ./ std(I_sample_imag)
 
         cond_phys = ifft(cond, (1,2))
         cond_real, cond_imag = Float32.(real(cond_phys)), Float32.(imag(cond_phys))
-        cond_real_stand = (cond_real .- mean(cond_real)) ./ std(cond_real)
-        cond_imag_stand = (cond_imag .- mean(cond_imag)) ./ std(cond_imag)
         
-        x_real = conv_in(I_sample_real_stand) # size: (32, 32, embedding_dim, batch_size)/(128,128,embedding_dim,batch_size)
-        x_imag = conv_in(I_sample_imag_stand)
+        x_real = conv_in(I_sample_real) # size: (32, 32, embedding_dim, batch_size)/(128,128,embedding_dim,batch_size)
+        x_imag = conv_in(I_sample_imag)
         cond_in_real = conv_in(cond_real) # size: (32, 32, embedding_dim, batch_size)/(128,128,embedding_dim,batch_size)
         cond_in_imag = conv_in(cond_imag)
 

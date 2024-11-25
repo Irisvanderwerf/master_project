@@ -1,6 +1,6 @@
 # Define the stochastic interpolant function
 function stochastic_interpolant(image1, image2, z, λ) 
-    return cos.(π/2 .*λ) .* image1 .+ sin.(π/2 .*λ).* image2 # .+ .√(2 .* λ .* (1 .- λ)) .* z
+    return cos.(π/2 .*λ) .* image1 .+ sin.(π/2 .*λ).* image2 .+ .√(2 .* λ .* (1 .- λ)) .* z
 end
 
 ### Plot an example of the stochastic interpolant ###
