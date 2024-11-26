@@ -1,19 +1,18 @@
 using Plots
-using Statistics
 
 # Forward Euler method
 function forward_euler(velocity_cnn, ps, st, images, label, t, dt, batch_size, dev)
     # Reshape t_sample to match the batch size
     t_sample = Float32.(fill(t, (1, 1, 1, batch_size))) |> dev
 
-    # # Ensure images are Float32 - if not complex
+    # # Ensure images are Float32 - not if you use complex numbers. 
     # images = Float32.(images)
 
     # Predict the velocity field using the neural network
-    velocity, st = Lux.apply(velocity_cnn, (images, t_sample, label), ps, st)
+    velocity, st = Lux.apply(velocity_cnn, (images, t_sample, label), ps, st) |> dev
 
     # Update the images based on the velocity field
-    updated_images = images .+ dt .* velocity
+    updated_images = images .+ dt .* velocity |> dev
 
     return updated_images, st
 end
@@ -22,7 +21,7 @@ function runge_kutta_4(velocity_cnn, ps, st, images, label,  t, dt, batch_size, 
     # Reshape t_sample to match the batch size
     t_sample = Float32.(fill(t, (1, 1, 1, batch_size))) |> dev
 
-    # # Ensure images are Float32 - if not complex
+    # # Ensure images are Float32 - not if complex
     # images= Float32.(images)
     
     # Predict the velocity field using the neural network
@@ -47,7 +46,7 @@ function runge_kutta_4(velocity_cnn, ps, st, images, label,  t, dt, batch_size, 
     return updated_images, st
 end
 
-# Main  function to generate digits
+# Main function to generate digits
 function generate_digit(velocity_cnn, ps, st, initial_gaussian_image, label, num_steps, batch_size, dev; method=:rk4)
     images = Float32.(initial_gaussian_image)  # Ensure initial images are Float32
     label = fill(label, 32, 32, 1, batch_size) # Set to proper size for the conditioning 
@@ -89,37 +88,10 @@ function plot_generated_digits(images, num_images_to_show)
     display(p)
 end
 
-# Generate the closure with the learned model
-function generate_digit(velocity_cnn, ps, st, initial_gaussian_image, label, num_steps, batch_size, dev; method=:rk4)
-    images = Float32.(initial_gaussian_image)  # Ensure initial images are Float32
-    label = fill(label, 32, 32, 1, batch_size) # Set to proper size for the conditioning 
-    
-    t_range = LinRange(0, 1, num_steps)
-    dt = t_range[2] - t_range[1]
-
-    # Simulate forward evolution over time from t = 0 to t = 1
-    for i in 1:num_steps-1
-        # Compute the current time t in the interval [0, 1]
-        t = t_range[i]
-        
-        # Choose the integration method
-        if method == :euler
-            images, st = forward_euler(velocity_cnn, ps, st, images, label, t, dt, batch_size, dev)
-        elseif method == :rk4
-            images, st = runge_kutta_4(velocity_cnn, ps, st, images, label, t, dt, batch_size, dev)
-        else
-            error("Unknown method: $method. Use :euler or :rk4.")
-        end
-    end
-
-    # Maybe add clamping 
-    return images # clamp.(images, 0.0, 1.0)
-end
-
-# Generate the predicted closure using an ODE
+# generate the closure 
 function generate_closure(velocity_cnn, ps, st, cond, num_steps, batch_size, dev; method=:rk4)
-    cond = reshape(cond, size(cond)..., 1) |> dev
-    images = Float32.(randn(size(cond))) |> dev # Ensure initial images are Float32
+    cond = Float32.(reshape(cond, size(cond)...,1)) |> dev
+    images = randn(size(cond)) |> dev
     
     t_range = LinRange(0, 1, num_steps)
     dt = t_range[2] - t_range[1]
@@ -128,36 +100,18 @@ function generate_closure(velocity_cnn, ps, st, cond, num_steps, batch_size, dev
     for i in 1:num_steps-1
         # Compute the current time t in the interval [0, 1]
         t = t_range[i]
+        images = Float32.(images)
         
         # Choose the integration method
         if method == :euler
-            images, st = forward_euler(velocity_cnn, ps, st, images, cond, t, dt, batch_size, dev)
+            images, st = forward_euler(velocity_cnn, ps, st, images, cond, t, dt, batch_size, dev) |> dev
         elseif method == :rk4
-            images, st = runge_kutta_4(velocity_cnn, ps, st, images, cond, t, dt, batch_size, dev)
+            images, st = runge_kutta_4(velocity_cnn, ps, st, images, cond, t, dt, batch_size, dev) |> dev
         else
             error("Unknown method: $method. Use :euler or :rk4.")
         end
     end
 
     # Maybe add clamping 
-    return images # clamp.(images, 0.0, 1.0)
-end
-
-# Maximum of  the averaged 
-function compute_max_min_MSE(v_train_standardized, c_train, mean, std, velocity_cnn, ps, st, num_steps, dev)
-    max_difference = -Inf  
-    min_difference = Inf
-    for i in 1:size(c_train, 4)
-        true_c = c_train[:, :, :, i]
-        cond_c = v_train_standardized[:,:,:,i]
-        predicted_c_standardized = generate_closure(velocity_cnn, ps, st, cond_c, num_steps, 1, dev; method=:euler)
-        predicted_c = (predicted_c_standardized .* std) .+ mean 
-        difference = mean(abs2, true_c - predicted_c)
-
-        # Update the maximum difference
-        max_difference = max(max_difference, difference)
-        min_difference = min(min_difference, difference)
-    end
-
-    return max_difference, min_difference
+    return images
 end

@@ -10,7 +10,6 @@ function sinusoidal_embedding(x,
     max_freq::AbstractFloat, 
     embedding_dims::Int, 
     dev)
-
     lower = log(min_freq)
     upper = log(max_freq)
     n = div(embedding_dims, 2)
@@ -234,17 +233,13 @@ function build_full_unet(embedding_dim = 8, hidden_channels = [16, 32, 64], t_pa
           )
     ) do x
         I_sample, t_sample, cond = x # size I_sample: (32,32,1,batch_size)/(128,128,2,batch_size), t_sample: (1,1,1,batch_size), cond: (32,32,1,batch_size)/(128,128,2,batch_size)
-        I_sample_phys = Float32.(real.(ifft(I_sample, (1,2))))
-       
-        cond_phys = Float32.(real.(ifft(cond,(1,2))))
-            
-        x = conv_in(I_sample_phys) # size: (32, 32, embedding_dim, batch_size)/(128,128,embedding_dim,batch_size)
-        cond_in = conv_in(cond_phys) # size: (32, 32, embedding_dim, batch_size)/(128,128,embedding_dim,batch_size)
+        
+        x = conv_in(I_sample) # size: (32, 32, embedding_dim, batch_size)/(128,128,embedding_dim,batch_size)
+        cond_in = conv_in(cond) # size: (32, 32, embedding_dim, batch_size)/(128,128,embedding_dim,batch_size)
         t_sample_embedded = t_embedding(t_sample) # size:(embedding_dim, batch_size)
 
-        u_net_output_phys = u_net((x, t_sample_embedded, cond_in))
-        u_net_output_spectral = fft(u_net_output_phys, (1,2))
+        u_net_output = u_net((x, t_sample_embedded, cond_in))
 
-        @return u_net_output_spectral
+        @return u_net_output
     end
 end
