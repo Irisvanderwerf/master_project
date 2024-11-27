@@ -6,8 +6,12 @@
 /docs/build/
 
 # ignore the saved trained models (>100MB)
-/trained_models/final_model.bson
-
+/trained_models/
+*.bson
+*.png
+*.out
+*.slurm
+*.gif
 
 # ignore .vscode
 .vscode/
