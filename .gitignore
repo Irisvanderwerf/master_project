@@ -15,3 +15,8 @@
 # ignore data
 mnist_data/
 
+# Ignore .png, .gif, and bson
+*.png
+*.gif
+*.bson
+
