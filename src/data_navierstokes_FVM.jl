@@ -32,7 +32,7 @@ function step_rk4(u0, dt, F)
         k = (k..., ki)
         u = u0
         for j = 1:i
-            @.  u += dt * a[i][j] * k[j]
+            u = u .+ dt .* a[i][j] .* k[j]
         end
     end
     u
