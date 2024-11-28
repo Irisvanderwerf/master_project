@@ -32,11 +32,11 @@ function load_model(file_path; dev)
         return ps_drift, st_drift, opt_drift
     else
         data = BSON.load(file_path)
-        ps_drift = data[:ps_drift]
+        ps_drift = data[:ps_drift_cpu]
         ps_drift = deepcopy(ps_drift) |> dev
-        st_drift = data[:st_drift]
+        st_drift = data[:st_drift_cpu]
         st_drift = deepcopy(st_drift) |> dev
-        opt_drift = data[:opt_drift]
+        opt_drift = data[:opt_drift_cpu]
         opt_drift = deepcopy(opt_drift) |> dev
         println("Loaded model and optimizer states (drift) from $file_path")
         return ps_drift, st_drift, opt_drift

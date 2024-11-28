@@ -30,7 +30,7 @@ include("u-net_conv_conditioned.jl")
 
 # Add functions for Navier Stokes simulations - Finite Volume Method (library from Syver)
 export step_rk4
-export face_averaging_velocity_2D
+# export face_averaging_velocity_2D
 export face_average_syver
 export face_average_syver!
 export compute_mean_std

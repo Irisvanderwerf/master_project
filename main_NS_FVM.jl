@@ -34,7 +34,7 @@ N_dns = 256; # Grid: 256 x 256
 
 t = 0.0f0; # Initial time t_0
 dt = 2.0f-4; # Time step Δt
-nt = 250; # Number of time steps (number of training and test samples)
+nt = 1000; # Number of time steps (number of training and test samples)
 
 create_right_hand_side(setup, psolver) = function right_hand_side(u, p, t)
     u = pad_circular(u, 1; dims = 1:2);
@@ -74,13 +74,10 @@ f_les = create_right_hand_side(setup_les, psolver_les);
 v_train = Array{Float32}[];
 c_train = Array{Float32}[];
 
-
-
-
 # Set paths to save/load data
 v_train_path = "v_train_data_FVM.bson";
 c_train_path = "c_train_data_FVM.bson";
-generate_new_data = true;  # Set this to true if you want to regenerate data
+generate_new_data = false;  # Set this to true if you want to regenerate data
 
 if !generate_new_data && isfile(v_train_path) && isfile(c_train_path)
     # Load existing data if available
@@ -103,13 +100,11 @@ else
 
         global u = INS.random_field(setup_dns, 0.0) |> dev; # size: (258, 258, 2)
         global u = u[2:end-1, 2:end-1, :]; # size: (256, 256, 2)
-        println(" The size of u is ", size(u), " with type ", typeof(u))
         nburn = 500; # number of steps to stabilize the simulation before collecting data.
         # Stabilize initial condition
         for i = 1:nburn
-            u = step_rk4(u, dt, f_dns)
+            u = step_rk4(u, dt, f_dns) # size: (256, 256, 2)
         end
-        println("check 3") # ---ERROR ----
 
         # Generate time evolution data
         for i = 1:nt+1
@@ -117,25 +112,18 @@ else
             if i > 1
                 global t, u
                 t += dt
-                u = step_rk4(u, dt, f_dns)
+                u = step_rk4(u, dt, f_dns) # size: (256, 256, 2)
             end
-            # print status
-            if i % 10 == 0
-                println("Finished time step ", i, " of ", nt+1)
-            end
-            # # Add the syver filter: Does it need padding or not?
-            # ubar = face_average_syver(u, setup_les, (N_dns/N_les)) |> dev;
-            # v[:,:,:,i] = Array(ubar) |> dev;
-            # Compute filtered DNS by using the face-averaging filter 
-            ubar = face_averaging_velocity_2D(u, N_dns, N_les) |> dev; # size: (64, 64, 2)
+            u = pad_circular(u, 1; dims = 1:2); # size: (258, 258, 2)
+            comp = div(N_dns, N_les)
+            ubar = face_average_syver(u, setup_les, comp); # size: (66, 66, 2)
+            ubar = ubar[2:end-1, 2:end-1, :]; # size: (64, 64, 2)
+            u = u[2:end-1, 2:end-1, :]; # size: (256, 256, 2)
+            input_filtered_RHS = pad_circular(f_dns(u, nothing, 0.0), 1; dims=1:2); # size: (258, 258, 2)
+            filtered_RHS = face_average_syver(input_filtered_RHS, setup_les, comp); # size: (66, 66, 2)
+            filtered_RHS = filtered_RHS[2:end-1, 2:end-1, :]; # size: (64, 64, 2)       
 
-            # # Compute the closure term with the syver filter
-            # filtered_RHS = face_averaging_syver(f_dns(u, nothing, 0.0), setup_les, (N_dns/N_les)) |> dev;
-            # RHS_ubar = f_les(ubar, nothing, 0.0) |> dev;l
-            # c[:, :, :, i] = Array(filtered_RHS - RHS_ubar) |> dev;
-
-            filtered_RHS = face_averaging_velocity_2D(f_dns(u, nothing, 0.0), N_dns, N_les) |> dev;
-            RHS_ubar = f_les(ubar, nothing, 0.0);
+            RHS_ubar = f_les(ubar, nothing, 0.0); # size: (64, 64, 2)
 
             c[:, :, :, i] = Array(filtered_RHS - RHS_ubar);
             v[:, :, :, i] = Array(ubar);
@@ -195,7 +183,7 @@ is_gaussian = true;
 # Name of potential new model
 model_name = "gaussian_model_FVM";
 # Path of potential loaded model. 
-load_path = nothing; # "trained_models/gaussian_model_FVM.bson";  # Set to `nothing` to initialize instead
+load_path = "trained_models/gaussian_model_FVM.bson";  # Set to `nothing` to initialize instead
 
 # Load/Initialize parameters of the network - ODE
 ps_drift, st_drift, opt_drift = initialize_or_load_model(model_name, velocity_cnn, load_path; dev);
@@ -205,12 +193,12 @@ batch_size = 32;
 num_samples = size(c_train,4);
 num_batches = ceil(Int, num_samples / batch_size);
 
-num_epochs = 500;
+num_epochs = 100;
 
 # Train ODE 
 train!(velocity_cnn, ps_drift, st_drift, opt_drift, num_epochs, batch_size, c_train_standardized, v_train, num_batches, dev, model_name, "trained_models");
 # # Train SDE
-# train!(velocity_cnn, ps_drift, st_drift, opt_drift, ps_denoiser, st_denoiser, opt_denoiser, num_epochs, batch_size, v_train, c_train, v_train, num_batches, dev, is_gaussian, model_name, "trained_models");
+# # train!(velocity_cnn, ps_drift, st_drift, opt_drift, ps_denoiser, st_denoiser, opt_denoiser, num_epochs, batch_size, v_train, c_train, v_train, num_batches, dev, is_gaussian, model_name, "trained_models");
 
 #### USE TRAINED MODEL #####;
 # # Set to test mode
