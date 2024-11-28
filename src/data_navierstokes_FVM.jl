@@ -12,6 +12,9 @@ using Plots
 using Random
 using Zygote
 using KernelAbstractions 
+using BSON
+using Printf
+using Serialization
 
 using IncompressibleNavierStokes
 const INS = IncompressibleNavierStokes
@@ -36,33 +39,6 @@ function step_rk4(u0, dt, F)
         end
     end
     u
-end
-
-# The face filtering averaging function for 2D NS-Equations. 
-function face_averaging_velocity_2D(u_DNS, N_DNS, N_LES) 
-    # Calculate the DNS cells per LES cell
-    dx = N_DNS ÷ N_LES
-    dy = N_DNS ÷ N_LES
-
-    # Initialize the LES face-averaged velocity array
-    u_LES = zeros(N_LES, N_LES, 2)
-
-    # Loop over LES cells and average DNS values at corresponding faces
-    for i in 1:N_LES
-        for j in 1:N_LES
-            for comp in 1:2  # Loop over velocity components (x and y)
-                x_start = max(1, (i-1)*dx + 1)
-                x_end   = min(N_DNS, i*dx)
-                y_start = max(1, (j-1)*dy + 1)
-                y_end   = min(N_DNS, j*dy)
-
-                subdomain = u_DNS[x_start:x_end, y_start:y_end, comp]
-                u_LES[i, j, comp] = mean(subdomain)
-            end
-        end
-    end
-
-    return u_LES  
 end
 
 face_average_syver(u, setup_les, comp) = face_average_syver!(INS.vectorfield(setup_les), u, setup_les, comp)
@@ -113,4 +89,141 @@ function inverse_standardize_set_per_channel(training_set, means, stds)
         inverse_standardized_set[:,:,c,:] .= (training_set[:,:,c,:] .* stds[c]) .+ means[c]
     end
     return inverse_standardized_set
+end
+
+function generate_or_load_data(N_dns, N_les, Re, v_train_path, c_train_path, v_test_path, c_test_path, generate_new_data, nt, dt, num_initial_conditions, num_train_conditions; dev)
+    if !generate_new_data && isfile(v_train_path) && isfile(c_train_path)
+        # Load existing data if available
+        println("Loading existing training and test dataset...")
+        v_train = deserialize(v_train_path)
+        c_train = deserialize(c_train_path)
+        v_test = deserialize(v_test_path)
+        c_test = deserialize(c_test_path)
+    else
+        println("Generating new training and test dataset...")
+
+        create_right_hand_side(setup, psolver) = function right_hand_side(u, p, t)
+            u = pad_circular(u, 1; dims = 1:2)
+            F = INS.momentum(u, nothing, t, setup)
+            F = F[2:end-1, 2:end-1, :]
+            F = pad_circular(F, 1; dims = 1:2)
+            PF = INS.project(F, setup; psolver)
+            PF[2:end-1, 2:end-1, :]
+        end
+        backend = CUDABackend();
+        # Setup DNS - Grid
+        x_dns = LinRange(0.0, 1.0, N_dns + 1), LinRange(0.0, 1.0, N_dns + 1);
+        setup_dns = INS.Setup(; x=x_dns, Re=Re, backend);
+        # Setup DNS - psolver
+        psolver_dns = INS.psolver_spectral(setup_dns);
+        # Setup LES - Grid 500
+        x_les = LinRange(0.0, 1.0, N_les + 1), LinRange(0.0, 1.0, N_les + 1);
+        setup_les = INS.Setup(; x=x_les, Re=Re, backend);
+        # Setup LES - psolver
+        psolver_les = INS.psolver_spectral(setup_les);
+        # SciML-compatible right hand side function
+        f_dns = create_right_hand_side(setup_dns, psolver_dns);
+        f_les = create_right_hand_side(setup_les, psolver_les); 
+    
+        # Initialize empty arrays for concatenating training data
+        v_train = Array{Float32}[];
+        c_train = Array{Float32}[];
+        v_test = Array{Float32}[];
+        c_test = Array{Float32}[];
+
+        anim = Animation()
+        for cond = 1:num_initial_conditions
+            println("Generating data for initial condition $cond")
+            # GPU version
+            v = zeros(N_les, N_les, 2, nt + 1) |> dev;
+            c = zeros(N_les, N_les, 2, nt + 1) |> dev;
+            global u = INS.random_field(setup_dns, 0.0) |> dev;
+            global u = u[2:end-1, 2:end-1, :];
+            nburn = 50000; # number of steps to stabilize the simulation before collecting data.
+            for i = 1:nburn
+                u = step_rk4(u, dt, f_dns)
+            end
+            # Generate time evolution data
+            global t = 0;
+            for i = 1:nt+1
+                # Update DNS solution at each timestep
+                if i > 1
+                    global u
+                    t += dt
+                    u = step_rk4(u, dt, f_dns)
+                end
+                u = pad_circular(u, 1; dims = 1:2);
+                comp = div(N_dns, N_les)
+                ubar = face_average_syver(u, setup_les, comp);
+                ubar = ubar[2:end-1, 2:end-1, :];
+                u = u[2:end-1, 2:end-1, :];
+                input_filtered_RHS = pad_circular(f_dns(u, nothing, 0.0), 1; dims=1:2);
+                filtered_RHS = face_average_syver(input_filtered_RHS, setup_les, comp);
+                filtered_RHS = filtered_RHS[2:end-1, 2:end-1, :];      
+                RHS_ubar = f_les(ubar, nothing, 0.0);
+                c[:, :, :, i] = Array(filtered_RHS - RHS_ubar);
+                v[:, :, :, i] = Array(ubar);
+                # Generate visualizations every 10 steps
+                if i % 10 == 0
+                    ω_dns = Array(INS.vorticity(pad_circular(u, 1; dims = 1:2), setup_dns))
+                    ω_les = Array(INS.vorticity(pad_circular(ubar, 1; dims = 1:2), setup_les))
+                    ω_dns = ω_dns[2:end-1, 2:end-1];
+                    ω_les = ω_les[2:end-1, 2:end-1];
+                    title_dns = @sprintf("Vorticity (DNS), t = %.3f", t)
+                    title_les = @sprintf("Vorticity (Filtered DNS), t = %.3f", t)
+                    p1 = Plots.heatmap(ω_dns'; xlabel = "x", ylabel = "y", title = title_dns, color=:viridis)
+                    p2 = Plots.heatmap(ω_les'; xlabel = "x", ylabel = "y", title = title_les, color=:viridis)
+                    fig = Plots.plot(p1, p2, layout = (1, 2), size=(1200, 400))
+                    frame(anim, fig)
+                end
+            end
+            if cond <= num_train_conditions
+                if cond == 1
+                    global v_train = Array(v)
+                    global c_train = Array(c)
+                else
+                    global v_train = cat(v_train, Array(v); dims=4)
+                    global c_train = cat(c_train, Array(c); dims=4)
+                end
+            else
+                if cond == 1
+                    global v_test = Array(v)
+                    global c_test = Array(c)
+                else
+                    global v_train = cat(v_train, Array(v); dims=4)
+                    global c_train = cat(c_train, Array(c); dims=4)
+                end
+            end
+        end
+        gif(anim, "vorticity_comparison_animation.gif")
+
+        println("Saving generated dataset...")
+        serialize(v_train_path, v_train)
+        serialize(c_train_path, c_train)
+        serialize(v_test_path, v_test)
+        serialize(c_test_path, c_test)
+    end
+    return v_train, c_train, v_test, c_test 
+    println("Dataset ready for use, which is of size: ", size(v_train))
+end
+
+function generate_or_load_standardized_data(v_train_standardized_path, c_train_standardized_path, v_test_standardized_path, c_test_standardized_path, generate_new_data, v_train, c_train, v_test, c_test)
+    if !generate_new_data && isfile(v_train_path) && isfile(c_train_path)
+        # Load existing data if available
+        println("Loading existing training and test dataset...")
+        v_train_standardized = deserialize(v_train_standardized_path)
+        c_train_standardized = deserialize(c_train_standardized_path)
+        v_test_standardized = deserialize(v_test_standardized_path)
+        c_test_standardized = deserialize(c_test_standardized_path)
+    else
+        println("Standardize the training and test dataset...")
+        state_means, state_std = compute_mean_std(v_train);
+        v_train_standardized = standardize_training_set_per_channel(v_train, state_means, state_std);
+        closure_means, closure_std = compute_mean_std(c_train);
+        c_train_standardized = standardize_training_set_per_channel(c_train, closure_means, closure_std);
+
+        v_test_standardized = standardize_training_set_per_channel(v_test, state_means, state_std);
+        c_test_standardized = standardize_training_set_per_channel(c_test, closure_means, closure_std);
+    end
+    return v_train_standardized, c_train_standardized, v_test_standardized, c_test_standardized, state_means, state_std, closure_means, closure_std
 end
