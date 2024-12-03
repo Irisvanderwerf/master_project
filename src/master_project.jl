@@ -1,15 +1,14 @@
 module master_project
 
-# Write your package code here.
+# include("data_mnist.jl")
 # include("data_navierstokes_spectral.jl")
 include("data_navierstokes_FVM.jl")
-# include("data_mnist.jl")
 include("stochastic_interpolant.jl")
-# include("cnn.jl")
-include("train_ODE.jl")
-# include("train_SDE.jl")
-include("generate_digit_ODE.jl")
+include("train.jl")
+include("generate_closure.jl")
+include("evaluation.jl")
 # include("generate_digit_SDE.jl")
+# include("cnn.jl")
 # include("u-net_residual.jl")
 # include("u-net_conv.jl")
 include("u-net_conv_conditioned.jl")
@@ -89,25 +88,30 @@ export save_model
 export load_model
 export initialize_or_load_model
 
-# Add functions for generating a digit - ODE
+# Add functions for generating closure - ODE or SDE
 export forward_euler
 export runge_kutta_4
-export generate_digit
-export plot_generated_digits
-export generate_closure
-
-# # Add functions for generating a digit - SDE
-# export gamma
-# export alpha
-# export beta
-# export derivative_alpha
-# export derivative_beta
-# export epsilon
-# export euler_maruyama
 # export generate_digit
-# export generate_closure
-# export compute_score_denoiser
-# export compute_score_velocity
+# export plot_generated_digits
+export generate_closure
+export gamma
+export alpha
+export beta
+export derivative_alpha
+export derivative_beta
+export epsilon
+export euler_maruyama
+export compute_score_denoiser
+export compute_score_velocity
+export inference
+export compute_energy_spectrum
+export radial_binning
+
+# evaluation of the network
+export mean_squared_error
+export mean_relative_mse
+export relative_rmse
+export compute_metrics_average
 
 end
 

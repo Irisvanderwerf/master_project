@@ -12,6 +12,7 @@
 *.out
 *.slurm
 *.gif
+*.pkl
 
 # ignore .vscode
 .vscode/

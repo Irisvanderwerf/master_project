@@ -20,6 +20,10 @@ using IncompressibleNavierStokes
 const INS = IncompressibleNavierStokes
 using OrdinaryDiffEq
 
+z = CUDA.functional() ? CUDA.zeros : (s...) -> zeros(Float32, s...)
+ArrayType = CUDA.functional() ? CuArray : Array
+CUDA.allowscalar(false)
+
 # The following function performsone RK4 time step. 
 function step_rk4(u0, dt, F)
     a = (
@@ -110,6 +114,7 @@ function generate_or_load_data(N_dns, N_les, Re, v_train_path, c_train_path, v_t
             PF = INS.project(F, setup; psolver)
             PF[2:end-1, 2:end-1, :]
         end
+
         backend = CUDABackend();
         # Setup DNS - Grid
         x_dns = LinRange(0.0, 1.0, N_dns + 1), LinRange(0.0, 1.0, N_dns + 1);
@@ -139,7 +144,7 @@ function generate_or_load_data(N_dns, N_les, Re, v_train_path, c_train_path, v_t
             c = zeros(N_les, N_les, 2, nt + 1) |> dev;
             global u = INS.random_field(setup_dns, 0.0) |> dev;
             global u = u[2:end-1, 2:end-1, :];
-            nburn = 50000; # number of steps to stabilize the simulation before collecting data.
+            nburn = 500; # number of steps to stabilize the simulation before collecting data.
             for i = 1:nburn
                 u = step_rk4(u, dt, f_dns)
             end
@@ -178,20 +183,24 @@ function generate_or_load_data(N_dns, N_les, Re, v_train_path, c_train_path, v_t
                 end
             end
             if cond <= num_train_conditions
-                if cond == 1
-                    global v_train = Array(v)
-                    global c_train = Array(c)
+                if cond == 1 && size(v_train, 1) == 0
+                    # Initialize the array on the first condition
+                    v_train = Array(v)
+                    c_train = Array(c)
                 else
-                    global v_train = cat(v_train, Array(v); dims=4)
-                    global c_train = cat(c_train, Array(c); dims=4)
+                    # Concatenate subsequent conditions
+                    v_train = cat(v_train, Array(v); dims=4)
+                    c_train = cat(c_train, Array(c); dims=4)
                 end
             else
-                if cond == 1
-                    global v_test = Array(v)
-                    global c_test = Array(c)
+                if cond == num_train_conditions + 1 && size(v_test, 1) == 0
+                    # Initialize the test arrays for the first test condition
+                    v_test = Array(v)
+                    c_test = Array(c)
                 else
-                    global v_train = cat(v_train, Array(v); dims=4)
-                    global c_train = cat(c_train, Array(c); dims=4)
+                    # Concatenate subsequent conditions
+                    v_test = cat(v_test, Array(v); dims=4)
+                    c_test = cat(c_test, Array(c); dims=4)
                 end
             end
         end
@@ -204,26 +213,44 @@ function generate_or_load_data(N_dns, N_les, Re, v_train_path, c_train_path, v_t
         serialize(c_test_path, c_test)
     end
     return v_train, c_train, v_test, c_test 
-    println("Dataset ready for use, which is of size: ", size(v_train))
 end
 
-function generate_or_load_standardized_data(v_train_standardized_path, c_train_standardized_path, v_test_standardized_path, c_test_standardized_path, generate_new_data, v_train, c_train, v_test, c_test)
-    if !generate_new_data && isfile(v_train_path) && isfile(c_train_path)
+function generate_or_load_standardized_data(v_train_standardized_path, c_train_standardized_path, v_test_standardized_path, c_test_standardized_path, generate_new_data, v_train, c_train, v_test, c_test, state_means_path, state_std_path, closure_means_path, closure_std_path)
+    if !generate_new_data && isfile(v_train_standardized_path) && isfile(c_train_standardized_path)
         # Load existing data if available
-        println("Loading existing training and test dataset...")
+        println("Loading existing standardized training and test dataset...")
         v_train_standardized = deserialize(v_train_standardized_path)
         c_train_standardized = deserialize(c_train_standardized_path)
         v_test_standardized = deserialize(v_test_standardized_path)
         c_test_standardized = deserialize(c_test_standardized_path)
+
+        println("Loading means and std values...")
+        state_means = deserialize(state_means_path)
+        state_std = deserialize(state_std_path)
+        closure_means = deserialize(closure_means_path)
+        closure_std = deserialize(closure_std_path)
     else
         println("Standardize the training and test dataset...")
         state_means, state_std = compute_mean_std(v_train);
-        v_train_standardized = standardize_training_set_per_channel(v_train, state_means, state_std);
         closure_means, closure_std = compute_mean_std(c_train);
+
+        v_train_standardized = standardize_training_set_per_channel(v_train, state_means, state_std);
         c_train_standardized = standardize_training_set_per_channel(c_train, closure_means, closure_std);
 
         v_test_standardized = standardize_training_set_per_channel(v_test, state_means, state_std);
         c_test_standardized = standardize_training_set_per_channel(c_test, closure_means, closure_std);
+
+        # Save generated data and means/std
+        println("Saving generated standardized dataset and mean/std values...")
+        serialize(v_train_standardized_path, v_train_standardized)
+        serialize(c_train_standardized_path, c_train_standardized)
+        serialize(v_test_standardized_path, v_test_standardized)
+        serialize(c_test_standardized_path, c_test_standardized)
+
+        serialize(state_means_path, state_means)
+        serialize(state_std_path, state_std)
+        serialize(closure_means_path, closure_means)
+        serialize(closure_std_path, closure_std)
     end
     return v_train_standardized, c_train_standardized, v_test_standardized, c_test_standardized, state_means, state_std, closure_means, closure_std
 end
