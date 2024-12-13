@@ -47,7 +47,6 @@ end
 
 face_average_syver(u, setup_les, comp) = face_average_syver!(INS.vectorfield(setup_les), u, setup_les, comp)
 
-
 function face_average_syver!(v, u, setup_les, comp)
     (; grid, backend, workgroupsize) = setup_les
     (; dimension, Nu, Iu) = grid
@@ -72,27 +71,41 @@ end
 
 # Function to compute mean and standard deviation per channel
 function compute_mean_std(training_set)
-    means = [mean(training_set[:,:,c,:]) for c in 1:2]
-    stds = [std(training_set[:,:,c,:]) for c in 1:2]
+    means = [mean(training_set[:,:,c,:,:]) for c in 1:2]
+    stds = [std(training_set[:,:,c,:,:]) for c in 1:2]
     return means, stds
 end
 
 # Function to standardize the training set per channel
-function standardize_training_set_per_channel(training_set, means, stds)
+function standardize_training_set_per_channel(training_set, means, stds; one_trajectory=false)
     standardized_set = similar(training_set)
-    for c in 1:2
-        standardized_set[:,:,c,:] .= (training_set[:,:,c,:] .- means[c]) ./ stds[c]
+    if !one_trajectory 
+        for c in 1:2
+            standardized_set[:,:,c,:,:] .= (training_set[:,:,c,:,:] .- means[c]) ./ stds[c]
+        end
+        return standardized_set
+    else
+        for c in 1:2
+            standardized_set[:,:,c,:] .= (training_set[:,:,c,:] .- means[c]) ./ stds[c]
+        end
+        return standardized_set
     end
-    return standardized_set
 end
 
 # Function of the inverse standardization per channel
-function inverse_standardize_set_per_channel(training_set, means, stds)
+function inverse_standardize_set_per_channel(training_set, means, stds; one_trajectory=false)
     inverse_standardized_set = similar(training_set)
-    for c in 1:2
-        inverse_standardized_set[:,:,c,:] .= (training_set[:,:,c,:] .* stds[c]) .+ means[c]
+    if !one_trajectory
+        for c in 1:2
+            inverse_standardized_set[:,:,c,:,:] .= (training_set[:,:,c,:,:] .* stds[c]) .+ means[c]
+        end
+        return inverse_standardized_set
+    else
+        for c in 1:2
+            inverse_standardized_set[:,:,c,:] .= (training_set[:,:,c,:] .* stds[c]) .+ means[c]
+        end
+        return inverse_standardized_set
     end
-    return inverse_standardized_set
 end
 
 function generate_or_load_data(N_dns, N_les, Re, v_train_path, c_train_path, v_test_path, c_test_path, generate_new_data, nt, dt, num_initial_conditions, num_train_conditions; dev)
@@ -131,17 +144,17 @@ function generate_or_load_data(N_dns, N_les, Re, v_train_path, c_train_path, v_t
         f_les = create_right_hand_side(setup_les, psolver_les); 
     
         # Initialize empty arrays for concatenating training data
-        v_train = Array{Float32}[];
-        c_train = Array{Float32}[];
-        v_test = Array{Float32}[];
-        c_test = Array{Float32}[];
+        v_train = nothing;
+        c_train = nothing;
+        v_test = nothing; 
+        c_test = nothing; 
 
         anim = Animation()
-        for cond = 1:num_initial_conditions
+        for cond in 1:num_initial_conditions
             println("Generating data for initial condition $cond")
             # GPU version
-            v = zeros(N_les, N_les, 2, nt + 1) |> dev;
-            c = zeros(N_les, N_les, 2, nt + 1) |> dev;
+            v = zeros(N_les, N_les, 2, nt + 1, 1) |> dev;
+            c = zeros(N_les, N_les, 2, nt + 1, 1) |> dev;
             global u = INS.random_field(setup_dns, 0.0) |> dev;
             global u = u[2:end-1, 2:end-1, :];
             nburn = 500; # number of steps to stabilize the simulation before collecting data.
@@ -160,51 +173,40 @@ function generate_or_load_data(N_dns, N_les, Re, v_train_path, c_train_path, v_t
                 u = pad_circular(u, 1; dims = 1:2);
                 comp = div(N_dns, N_les)
                 ubar = face_average_syver(u, setup_les, comp);
+
                 ubar = ubar[2:end-1, 2:end-1, :];
                 u = u[2:end-1, 2:end-1, :];
                 input_filtered_RHS = pad_circular(f_dns(u, nothing, 0.0), 1; dims=1:2);
                 filtered_RHS = face_average_syver(input_filtered_RHS, setup_les, comp);
+
                 filtered_RHS = filtered_RHS[2:end-1, 2:end-1, :];      
                 RHS_ubar = f_les(ubar, nothing, 0.0);
-                c[:, :, :, i] = Array(filtered_RHS - RHS_ubar);
-                v[:, :, :, i] = Array(ubar);
+                c[:, :, :, i, 1] = Array(filtered_RHS - RHS_ubar);
+                v[:, :, :, i, 1] = Array(ubar);
                 # Generate visualizations every 10 steps
-                if i % 10 == 0
-                    ω_dns = Array(INS.vorticity(pad_circular(u, 1; dims = 1:2), setup_dns))
-                    ω_les = Array(INS.vorticity(pad_circular(ubar, 1; dims = 1:2), setup_les))
-                    ω_dns = ω_dns[2:end-1, 2:end-1];
-                    ω_les = ω_les[2:end-1, 2:end-1];
-                    title_dns = @sprintf("Vorticity (DNS), t = %.3f", t)
-                    title_les = @sprintf("Vorticity (Filtered DNS), t = %.3f", t)
-                    p1 = Plots.heatmap(ω_dns'; xlabel = "x", ylabel = "y", title = title_dns, color=:viridis)
-                    p2 = Plots.heatmap(ω_les'; xlabel = "x", ylabel = "y", title = title_les, color=:viridis)
-                    fig = Plots.plot(p1, p2, layout = (1, 2), size=(1200, 400))
-                    frame(anim, fig)
-                end
+                # if i % 100 == 0
+                #     ω_dns = Array(INS.vorticity(pad_circular(u, 1; dims = 1:2), setup_dns))
+                #     ω_les = Array(INS.vorticity(pad_circular(ubar, 1; dims = 1:2), setup_les))
+                #     ω_dns = ω_dns[2:end-1, 2:end-1];
+                #     ω_les = ω_les[2:end-1, 2:end-1];
+                #     title_dns = @sprintf("Vorticity (DNS), t = %.3f", t)
+                #     title_les = @sprintf("Vorticity (Filtered DNS), t = %.3f", t)
+                #     p1 = Plots.heatmap(ω_dns'; xlabel = "x", ylabel = "y", title = title_dns, color=:viridis)
+                #     p2 = Plots.heatmap(ω_les'; xlabel = "x", ylabel = "y", title = title_les, color=:viridis)
+                #     fig = Plots.plot(p1, p2, layout = (1, 2), size=(1200, 400))
+                #     frame(anim, fig)
+                # end
             end
+
             if cond <= num_train_conditions
-                if cond == 1 && size(v_train, 1) == 0
-                    # Initialize the array on the first condition
-                    v_train = Array(v)
-                    c_train = Array(c)
-                else
-                    # Concatenate subsequent conditions
-                    v_train = cat(v_train, Array(v); dims=4)
-                    c_train = cat(c_train, Array(c); dims=4)
-                end
+                v_train = v_train === nothing ? v : cat(v_train, v; dims=5)
+                c_train = c_train === nothing ? c : cat(c_train, c; dims=5)
             else
-                if cond == num_train_conditions + 1 && size(v_test, 1) == 0
-                    # Initialize the test arrays for the first test condition
-                    v_test = Array(v)
-                    c_test = Array(c)
-                else
-                    # Concatenate subsequent conditions
-                    v_test = cat(v_test, Array(v); dims=4)
-                    c_test = cat(c_test, Array(c); dims=4)
-                end
+                v_test = v_test === nothing ? v : cat(v_test, v; dims=5)
+                c_test = c_test === nothing ? c : cat(c_test, c; dims=5)
             end
         end
-        gif(anim, "vorticity_comparison_animation.gif")
+        # gif(anim, "figures/vorticity_comparison_animation.gif")
 
         println("Saving generated dataset...")
         serialize(v_train_path, v_train)
@@ -235,9 +237,9 @@ function generate_or_load_standardized_data(v_train_standardized_path, c_train_s
         closure_means, closure_std = compute_mean_std(c_train);
 
         v_train_standardized = standardize_training_set_per_channel(v_train, state_means, state_std);
-        c_train_standardized = standardize_training_set_per_channel(c_train, closure_means, closure_std);
-
         v_test_standardized = standardize_training_set_per_channel(v_test, state_means, state_std);
+
+        c_train_standardized = standardize_training_set_per_channel(c_train, closure_means, closure_std);
         c_test_standardized = standardize_training_set_per_channel(c_test, closure_means, closure_std);
 
         # Save generated data and means/std
@@ -253,4 +255,66 @@ function generate_or_load_standardized_data(v_train_standardized_path, c_train_s
         serialize(closure_std_path, closure_std)
     end
     return v_train_standardized, c_train_standardized, v_test_standardized, c_test_standardized, state_means, state_std, closure_means, closure_std
+end
+
+# Assuming v_train_standardized, c_train_standardized, v_test_standardized, c_test_standardized are defined
+function print_min_max(dataset, name)
+    println("$name:")
+    println("  Min: ", minimum(dataset))
+    println("  Max: ", maximum(dataset))
+end
+
+function compute_velocity_magnitude(v)
+    @assert size(v, 3) == 2 "Input array must have 2 fields (v_x and v_y) in the third dimension."
+    
+    v_x = view(v, :, :, 1, :, :)  # Extract v_x
+    v_y = view(v, :, :, 2, :, :)  # Extract v_y
+
+    # Perform element-wise operations compatible with CPU and GPU
+    return sqrt.(v_x.^2 .+ v_y.^2)
+end
+
+function plot_velocity_magnitudes(v_train, v_test, c_train, c_test, v_train_standardized, v_test_standardized, c_train_standardized, c_test_standardized, time_step, trajectory)
+    # Compute velocity magnitudes for all datasets
+    datasets = [
+        ("v_train", compute_velocity_magnitude(v_train)[:, :, time_step, trajectory]),
+        ("c_train", compute_velocity_magnitude(c_train)[:, :, time_step, trajectory]),
+        ("v_test", compute_velocity_magnitude(v_test)[:, :, time_step, trajectory]),
+        ("c_test", compute_velocity_magnitude(c_test)[:, :, time_step, trajectory]),
+        ("v_train_stand", compute_velocity_magnitude(v_train_standardized)[:, :, time_step, trajectory]),
+        ("c_train_stand", compute_velocity_magnitude(c_train_standardized)[:, :, time_step, trajectory]),
+        ("v_test_stand", compute_velocity_magnitude(v_test_standardized)[:, :, time_step, trajectory]),
+        ("c_test_stand", compute_velocity_magnitude(c_test_standardized)[:, :, time_step, trajectory])      
+    ]
+
+    # Convert GPU arrays to CPU before plotting
+    plots = []
+    for (label, data) in datasets
+        data_cpu = Array(data)  # Ensure the data is on the CPU
+        push!(plots, Plots.heatmap(data_cpu'; xlabel = "x", ylabel = "y", title = label, color=:viridis))
+    end
+
+    # Arrange the plots in a grid
+    fig = Plots.plot(plots..., layout = (2, 4), size=(2400, 800))
+    savefig(fig, "figures/velocity_magnitude_datasets.png")
+    println("Plot saved as figures/velocity_magnitude_datasets.png")
+end
+
+function create_training_sets(c_train, v_train)
+    # Get dimensions
+    x, y, num_components, num_time_steps, num_trajectories = size(c_train)
+
+    # Initialize arrays for GPU compatibility
+    initial_sample = CUDA.zeros(Float32, x, y, num_components, num_time_steps - 1, num_trajectories)
+    target_sample = CUDA.zeros(Float32, x, y, num_components, num_time_steps - 1, num_trajectories)
+    target_label = CUDA.zeros(Float32, x, y, num_components, num_time_steps - 1, num_trajectories)
+
+    for i in 1:num_time_steps - 1
+        # Assign slices directly into the preallocated arrays
+        initial_sample[:, :, :, i, :] .= c_train[:, :, :, i, :]
+        target_sample[:, :, :, i, :] .= c_train[:, :, :, i + 1, :]
+        target_label[:, :, :, i, :] .= v_train[:, :, :, i + 1, :]
+    end
+
+    return initial_sample, target_sample, target_label
 end

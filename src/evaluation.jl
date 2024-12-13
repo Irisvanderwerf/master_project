@@ -40,9 +40,9 @@ function compute_metrics_average(y_true, y_pred; epsilon=1e-8, dev)
         y_hat = y_pred[:, :, :, i]
         
         # Compute sample-wise metrics
-        push!(mse, mean((y .- y_hat).^2))
-        push!(rel_mse, mean(((y .- y_hat).^2) ./ (y.^2 .+ epsilon)))
-        push!(rel_rmse, sqrt(sum((y .- y_hat).^2) / (sum(y.^2) + epsilon)))
+        push!(mse, mean_squared_error(y, y_hat; dev))
+        push!(rel_mse, mean_relative_mse(y, y_pred; epsilon, dev))
+        push!(rel_rmse, relative_rmse(y, y_pred; epsilon, dev))
     end
 
     # Compute averages

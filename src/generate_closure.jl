@@ -4,6 +4,7 @@ const INS = IncompressibleNavierStokes
 using OrdinaryDiffEq
 using FFTW
 using KernelAbstractions
+using Printf
 
 # Forward Euler method
 function forward_euler(velocity_cnn, ps, st, images, cond, t, dt, num_test_samples, dev)
@@ -19,7 +20,7 @@ function forward_euler(velocity_cnn, ps, st, images, cond, t, dt, num_test_sampl
     return updated_images, st
 end
 
-function runge_kutta_4(velocity_cnn, ps, st, images, cond,  t, dt, num_test_samples, dev)
+function runge_kutta_4(velocity_cnn, ps, st, images, cond, t, dt, num_test_samples, dev)
     # Reshape t_sample to match the batch size
     t_sample = Float32.(fill(t, (1, 1, 1, num_test_samples))) |> dev
     
@@ -217,36 +218,119 @@ function compute_score_velocity(t, drift, gaussian_image)
     end
 end
 
-# Function plot the energy spectrum
-function compute_energy_spectrum(u_field)
-    u_x, u_y = u_field[:,:,1], u_field[:,:,2]
-    N_x, N_y = size(u_x)
-    kx = fftshift(-N_x ÷ 2:(N_x ÷ 2 - 1)) * (2π / N_x)
-    ky = fftshift(-N_y ÷ 2:(N_y ÷ 2 - 1)) * (2π / N_y)
-    KX = reshape(kx, 1, :)  # Row vector
-    KY = reshape(ky, :, 1)  # Column vector
-    k = sqrt.(KX.^2 .+ KY.^2)
-    u_x_hat = fftshift(fft(u_x))
-    u_y_hat = fftshift(fft(u_y))
-    E_k = 0.5 * (abs.(u_x_hat).^2 .+ abs.(u_y_hat).^2)
-    return k, E_k
+function compute_energy_spectra(sol)
+    num_trajectories = size(sol, 4);
+    
+    nx = size(sol, 1);
+    ny = size(sol, 2);
+    
+    kx = fftfreq(nx, nx)
+    ky = fftfreq(ny, ny)
+    
+    K = (kx.^2)' .+ (ky.^2);
+    
+    K_bins = logrange(1, maximum(K), 100) 
+    
+    a = 1.6;
+    
+    energy = zeros(Float32, length(K_bins), num_trajectories) 
+    for i = 1:num_trajectories
+        u = sol[:, :, 1, i];
+        v = sol[:, :, 2, i];
+
+        u_fft = fft(u, [1, 2]);
+        v_fft = fft(v, [1, 2]);
+
+        u_fft_squared = abs2.(u_fft) ./ (2 * prod(size(u_fft))^2);
+        v_fft_squared = abs2.(v_fft) ./ (2 * prod(size(v_fft))^2);
+        
+        for j = 1:length(K_bins)
+            
+            bin = K_bins[j]
+
+            mask = (K .> bin / a) .& (K .< bin * a)
+    
+            u_fft_filtered = u_fft_squared .* mask
+            v_fft_filtered = v_fft_squared .* mask
+        
+            e = 0.5 * (sum(u_fft_filtered + v_fft_filtered))
+    
+            energy[j, i] = e
+        end
+    end
+    
+    return energy, K_bins
 end
 
-# Bin the energy spectrum radially
-function radial_binning(k, E_k, N_bins=50)
-    k_max = maximum(k)
-    k_bins = range(0, stop=k_max, length=N_bins+1)
-    E_spectrum = zeros(N_bins)
-    for j in 1:N_bins
-        in_bin = (k .>= k_bins[j]) .& (k .< k_bins[j+1])
-        E_spectrum[j] = sum(E_k[in_bin])
+function compute_total_energy(sol)
+
+    num_trajectories = size(sol, 5)
+    num_time_steps = size(sol, 4)
+
+    energy = zeros(num_time_steps, num_trajectories)
+    for i = 1:num_trajectories
+        for j in 1:num_time_steps
+            energy[j, i] = sum(sol[:, :, 1, j, i].^2) + sum(sol[:, :, 2, j, i].^2)
+            energy[j, i] /= 2
+        end
     end
-        k_bin_centers = 0.5 .* (k_bins[1:end-1] + k_bins[2:end])
-        return k_bin_centers, E_spectrum
+
+    return energy
+end
+
+function rk4_with_closure(ubar_test, state_means, state_std, velocity_cnn, ps_drift, st_drift, ps_denoiser, st_denoiser, num_steps, is_gaussian, dev, closure_means, closure_std, dt; time_method=:rk4, method=:ODE)
+    stand_ubar_test = standardize_training_set_per_channel(ubar_test, state_means, state_std);
+    stand_closure_1 = generate_closure(velocity_cnn, ps_drift, st_drift, ps_denoiser, st_denoiser, stand_ubar_test, stand_ubar_test, num_steps, is_gaussian, dev; time_method=:rk4, method=:ODE);
+    closure_1 = inverse_standardize_set_per_channel(stand_closure_1, closure_means, closure_std);
+    k1 =  f_les(ubar_test, nothing, 0.0) .+ closure_1;
+
+    input_k2 = ubar_test .+ k1 ./2; 
+    stand_input_k2 = standardize_training_set_per_channel(input_k2, state_means, state_std);
+    stand_closure_2 = generate_closure(velocity_cnn, ps_drift, st_drift, ps_denoiser, st_denoiser, stand_input_k2, stand_input_k2, num_steps, is_gaussian, dev; time_method=:rk4, method=:ODE);
+    closure_2 = inverse_standardize_set_per_channel(stand_closure_2, closure_means, closure_std);
+    k2 = f_les(input_k2, nothing, 0.0) .+ closure_2;
+    
+    input_k3 = ubar_test .+ k2 ./2;
+    stand_input_k3 = standardize_training_set_per_channel(input_k3, state_means, state_std);
+    stand_closure_3 = generate_closure(velocity_cnn, ps_drift, st_drift, ps_denoiser, st_denoiser, stand_input_k3, stand_input_k3, num_steps, is_gaussian, dev; time_method=:rk4, method=:ODE);
+    closure_3 = inverse_standardize_set_per_channel(stand_closure_3, closure_means, closure_std);
+    k3 = f_les(input_k3, nothing, 0.0) .+ closure_3;
+    
+    input_k4 = ubar_test .+ k3;
+    stand_input_k4 = standardize_training_set_per_channel(input_k4, state_means, state_std);
+    stand_closure_4 = generate_closure(velocity_cnn, ps_drift, st_drift, ps_denoiser, st_denoiser, stand_input_k4, stand_input_k4, num_steps, is_gaussian, dev; time_method=:rk4, method=:ODE);   
+    closure_4 = inverse_standardize_set_per_channel(stand_closure_4, closure_means, closure_std);
+    k4 = f_les(input_k4, nothing, 0.0) .+ closure_4; 
+    
+    return ubar_test .+ (dt ./ 6) .* (k1 .+ 2 .* k2 .+ 2 .* k3 .+ k4)
+end
+
+function rk4_with_closure_deterministic(ubar_test, label, state_means, state_std, velocity_cnn, ps_drift, st_drift, closure_means, closure_std, dt, batch_size, f_les; dev)
+    t_sample = Float32.(fill(0, 1, 1, 1, batch_size)) |> dev;
+    stand_ubar_test = standardize_training_set_per_channel(ubar_test, state_means, state_std; one_trajectory=true) |> dev;
+    stand_closure_1, _ = Lux.apply(velocity_cnn, (stand_ubar_test, t_sample, label), ps_drift, st_drift) |> dev;
+    closure_1 = inverse_standardize_set_per_channel(stand_closure_1, closure_means, closure_std; one_trajectory=true) |> dev;
+    k1 =  f_les(ubar_test, nothing, 0.0) .+ closure_1;
+    input_k2 = ubar_test .+ k1 ./2; 
+    stand_input_k2 = standardize_training_set_per_channel(input_k2, state_means, state_std; one_trajectory=true) |> dev;
+    stand_closure_2, _ = Lux.apply(velocity_cnn, (stand_input_k2, t_sample, label), ps_drift, st_drift) |> dev;
+    closure_2 = inverse_standardize_set_per_channel(stand_closure_2, closure_means, closure_std; one_trajectory=true) |> dev;
+    k2 = f_les(input_k2, nothing, 0.0) .+ closure_2;
+    input_k3 = ubar_test .+ k2 ./2;
+    stand_input_k3 = standardize_training_set_per_channel(input_k3, state_means, state_std; one_trajectory=true) |> dev;
+    stand_closure_3, _ = Lux.apply(velocity_cnn, (stand_input_k3, t_sample, label), ps_drift, st_drift) |> dev;
+    closure_3 = inverse_standardize_set_per_channel(stand_closure_3, closure_means, closure_std; one_trajectory=true) |> dev;
+    k3 = f_les(input_k3, nothing, 0.0) .+ closure_3;
+    input_k4 = ubar_test .+ k3;
+    stand_input_k4 = standardize_training_set_per_channel(input_k4, state_means, state_std; one_trajectory=true) |> dev;
+    stand_closure_4, _ = Lux.apply(velocity_cnn, (stand_input_k4, t_sample, label), ps_drift, st_drift) |> dev;   
+    closure_4 = inverse_standardize_set_per_channel(stand_closure_4, closure_means, closure_std; one_trajectory=true) |> dev;
+    k4 = f_les(input_k4, nothing, 0.0) .+ closure_4; 
+    return ubar_test .+ (dt ./ 6) .* (k1 .+ 2 .* k2 .+ 2 .* k3 .+ k4)
 end
 
 # Function for inference - add closure over the time
-function inference(dt, nt, num_steps, batch_size, v_test_standardized, v_test, velocity_cnn, ps_drift, _st_drift, ps_denoiser, _st_denoiser, is_gaussian, closure_means, closure_std, state_means, state_std, N_les, Re, dev; time_method=:euler, method=:ODE)
+function inference(dt, nt, num_steps, batch_size, v_test, velocity_cnn, ps_drift, _st_drift, ps_denoiser, _st_denoiser, is_gaussian, closure_means, closure_std, state_means, state_std, N_les, Re, dev; time_method=:euler, method=:ODE)
     create_right_hand_side(setup, psolver) = function right_hand_side(u, p, t)
         u = pad_circular(u, 1; dims = 1:2)
         F = INS.momentum(u, nothing, t, setup)
@@ -263,25 +347,23 @@ function inference(dt, nt, num_steps, batch_size, v_test_standardized, v_test, v
     f_les = create_right_hand_side(setup_les, psolver_les); 
     
     global t = 0.0f0; # Initial time t_0
-    global ubar_test = v_test_standardized[:,:,:,1];
-    ubar_test = reshape(ubar_test, N_les, N_les, 2, batch_size) |> dev;  
     global u_les = v_test[:,:,:,1]; 
-    u_les = reshape(ubar_test, N_les, N_les, 2, batch_size) |> dev;  
+    u_les = reshape(u_les, N_les, N_les, 2, batch_size) |> dev; 
+    global ubar_test = u_les; 
+
+    v_test = v_test |> dev; 
 
     for i=1:nt+1
         global u_les, ubar_test
         if i > 1
             global t
-            stand_closure = generate_closure(velocity_cnn, ps_drift, _st_drift, ps_denoiser, _st_denoiser, ubar_test, ubar_test, num_steps, is_gaussian, dev; time_method=:euler, method=:ODE) |> dev; 
-            closure = inverse_standardize_set_per_channel(stand_closure, closure_means, closure_std) |> dev
-            u_les = u_les .+ (dt .* f_les(u_les, nothing, 0.0)) # Forward Euler step
-            next_ubar_test = u_les .+ (dt .* closure)
-            ubar_test = standardize_training_set_per_channel(next_ubar_test, state_means, state_std)
+            u_les = step_rk4(u_les, dt, f_les) |> dev;
+            next_ubar_test = rk4_with_closure(ubar_test, state_means, state_std, velocity_cnn, ps_drift, _st_drift, ps_denoiser, _st_denoiser, num_steps, is_gaussian, dev, closure_means, closure_std, dt; time_method=:rk4, method=:ODE)
             t += dt
             println("Finished time step ", i)
         end
         
-        if i % 10 == 0 && i > 1
+        if i % 5 == 0 && i > 1
             t = (i-1) * dt
             ω_model = Array(INS.vorticity(pad_circular(next_ubar_test, 1; dims = 1:2), setup_les))[:,:,1]
             ω_nomodel = Array(INS.vorticity(pad_circular(u_les, 1; dims=1:2), setup_les))[:,:,1]
@@ -290,14 +372,7 @@ function inference(dt, nt, num_steps, batch_size, v_test_standardized, v_test, v
             ω_model = ω_model[2:end-1, 2:end-1];
             ω_nomodel = ω_nomodel[2:end-1, 2:end-1];
             ω_groundtruth = ω_groundtruth[2:end-1, 2:end-1];
-
-            k_les, E_les = compute_energy_spectrum(u_les[:,:,:,1])
-            k_next, E_next = compute_energy_spectrum(next_ubar_test[:,:,:,1])
-            k_truth, E_truth = compute_energy_spectrum(v_test[:,:,:,i])
-            k_les_bins, E_les_spectrum = radial_binning(k_les, E_les)
-            k_next_bins, E_next_spectrum = radial_binning(k_next, E_next)
-            k_truth_bins, E_truth_spectrum = radial_binning(k_truth, E_truth)
-
+             
             ω_closure = abs.(ω_groundtruth - ω_nomodel);
             ω_pred_closure = abs.(ω_model - ω_nomodel);
             ω_error_map = abs.(ω_model - ω_groundtruth);
@@ -311,22 +386,21 @@ function inference(dt, nt, num_steps, batch_size, v_test_standardized, v_test, v
             title_error = @sprintf("Error model, t=%.3f", t)
 
             # Determine the global color scale range
-            all_data = [ω_model, ω_nomodel, ω_groundtruth, ω_closure, ω_pred_closure, ω_error_map]
-            v_min = minimum([minimum(data) for data in all_data])
-            v_max = maximum([maximum(data) for data in all_data])
+            all_data_state = [ω_model, ω_nomodel, ω_groundtruth]
+            all_data_closure = [ω_closure, ω_pred_closure, ω_error_map]
+            v_min_state = minimum([minimum(data) for data in all_data_state])
+            v_max_state = maximum([maximum(data) for data in all_data_state])
+            v_min_closure = minimum([minimum(data) for data in all_data_closure])
+            v_max_closure = maximum([maximum(data) for data in all_data_closure])
 
-            p1 = Plots.heatmap(ω_nomodel'; xlabel = "x", ylabel="y", title=title_nomodel, color=:viridis, clim = (v_min, v_max))
-            p2 = Plots.heatmap(ω_model'; xlabel = "x", ylabel = "y", title=title_model, color=:viridis, clim = (v_min, v_max))
-            p3 = Plots.heatmap(ω_groundtruth'; xlabel = "x", ylabel = "y", title=title_groundtruth, color=:viridis, clim = (v_min, v_max))
-            p4 = Plots.heatmap(ω_closure'; xlabel="x", ylabel="y", title=title_closure, color=:viridis, clim = (v_min, v_max))
-            p5 = Plots.heatmap(ω_pred_closure'; xlabel="x", ylabel="y", title=title_pred_closure, color=:viridis, clim = (v_min, v_max))
-            p6 = Plots.heatmap(ω_error_map'; xlabel="x", ylabel="y", title=title_error, color=:viridis, clim = (v_min, v_max))
-            p7 = Plots.plot(k_les_bins, E_les_spectrum, xlabel="k", ylabel="E(k)", label="no model", xscale=:log10, yscale=:log10, title="Energy Spectrum")
-            Plots.plot!(p7, k_next_bins, E_next_spectrum, label="model")
-            Plots.plot!(p7, k_truth_bins, E_truth_spectrum, label="ground truth")
+            p1 = Plots.heatmap(ω_nomodel'; xlabel = "x", ylabel="y", title=title_nomodel, color=:viridis, clim = (v_min_state, v_max_state))
+            p2 = Plots.heatmap(ω_model'; xlabel = "x", ylabel = "y", title=title_model, color=:viridis, clim = (v_min_state, v_max_state))
+            p3 = Plots.heatmap(ω_groundtruth'; xlabel = "x", ylabel = "y", title=title_groundtruth, color=:viridis, clim = (v_min_state, v_max_state))
+            p4 = Plots.heatmap(ω_closure'; xlabel="x", ylabel="y", title=title_closure, color=:viridis, clim = (v_min_closure, v_max_closure))
+            p5 = Plots.heatmap(ω_pred_closure'; xlabel="x", ylabel="y", title=title_pred_closure, color=:viridis, clim = (v_min_closure, v_max_closure))
+            p6 = Plots.heatmap(ω_error_map'; xlabel="x", ylabel="y", title=title_error, color=:viridis, clim = (v_min_closure, v_max_closure))
 
-        
-            fig = Plots.plot(p1, p2, p3, p4, p5, p6, p7, layout = (3, 3), size=(3200, 1200))
+            fig = Plots.plot(p1, p2, p3, p4, p5, p6, layout = (2, 3), size=(3200, 1200))
             savefig(fig, @sprintf("figures/vorticity_timestep_%03d.png", i))
 
             # Print the computed error
@@ -335,3 +409,166 @@ function inference(dt, nt, num_steps, batch_size, v_test_standardized, v_test, v
     end
 end
 
+function inference_deterministic(dt, nt, batch_size, v_test, velocity_cnn, ps_drift, _st_drift, closure_means, closure_std, state_means, state_std, N_les, Re; dev)
+    create_right_hand_side(setup, psolver) = function right_hand_side(u, p, t)
+        u = pad_circular(u, 1; dims = 1:2)
+        F = INS.momentum(u, nothing, t, setup)
+        F = F[2:end-1, 2:end-1, :]
+        F = pad_circular(F, 1; dims = 1:2)
+        PF = INS.project(F, setup; psolver)
+        PF[2:end-1, 2:end-1, :]
+    end
+
+    backend = CUDABackend();
+    x_les = LinRange(0.0, 1.0, N_les + 1), LinRange(0.0, 1.0, N_les + 1);
+    setup_les = INS.Setup(; x=x_les, Re=Re, backend);
+    psolver_les = INS.psolver_spectral(setup_les);
+    f_les = create_right_hand_side(setup_les, psolver_les); 
+    
+    global t = 0.0f0; 
+    global u_les = v_test[:,:,:,1]; 
+    u_les = reshape(u_les, N_les, N_les, 2, batch_size) |> dev; 
+    global ubar_test = u_les |> dev; 
+    t_sample = Float32.(fill(0, 1, 1, 1, batch_size)) |> dev
+
+    for i=1:nt+1
+        global u_les, ubar_test
+        if i > 1
+            global t
+            u_les = step_rk4(u_les, dt, f_les) |> dev;
+            stand_input = standardize_training_set_per_channel(ubar_test, state_means, state_std; one_trajectory=true) |> dev;
+            stand_closure, _ = Lux.apply(velocity_cnn, (stand_input, t_sample), ps_drift, _st_drift) |> dev;   
+            closure = inverse_standardize_set_per_channel(stand_closure, closure_means, closure_std; one_trajectory=true) |> dev;
+            ubar_test = step_rk4(ubar_test, dt, f_les) .+ (dt .* closure)
+            # ubar_test = rk4_with_closure_deterministic(ubar_test, ubar_test, state_means, state_std, velocity_cnn, ps_drift, _st_drift, closure_means, closure_std, dt, batch_size, f_les; dev) |> dev;
+            t += dt
+        end
+        
+        if i % 50 == 0 # && i > 1
+            t = (i-1) * dt
+            groundtruth = v_test[:,:,:,i] |> dev;
+            ω_model = Array(INS.vorticity(pad_circular(ubar_test, 1; dims = 1:2), setup_les))[:,:,1]
+            ω_nomodel = Array(INS.vorticity(pad_circular(u_les, 1; dims=1:2), setup_les))[:,:,1]
+            ω_groundtruth =  Array(INS.vorticity(pad_circular(groundtruth, 1; dims=1:2), setup_les))[:,:,1]
+
+            ω_model = ω_model[2:end-1, 2:end-1];
+            ω_nomodel = ω_nomodel[2:end-1, 2:end-1];
+            ω_groundtruth = ω_groundtruth[2:end-1, 2:end-1];
+             
+            ω_closure = abs.(ω_groundtruth - ω_nomodel);
+            ω_pred_closure = abs.(ω_model - ω_nomodel);
+            ω_error_map = abs.(ω_model - ω_groundtruth);
+
+            # Compute energy spectra
+            energy_nomodel, K_bins = compute_energy_spectra(Array(u_les))
+            energy_model, _ = compute_energy_spectra(Array(ubar_test))
+            energy_groundtruth, _ = compute_energy_spectra(Array(groundtruth))
+
+            title_model = @sprintf("Vorticity model, t = %.3f", t)
+            title_nomodel = @sprintf("Vorticity no model, t=%.3f", t)
+            title_groundtruth = @sprintf("Vorticity ground truth, t=%.3f", t)
+
+            title_closure = @sprintf("vorticity closure, t=%.3f", t)
+            title_pred_closure = @sprintf("Predicted closure, t=%.3f", t)
+            title_error = @sprintf("Error model, t=%.3f", t)
+
+            # Determine the global color scale range
+            all_data_state = [ω_model, ω_nomodel, ω_groundtruth]
+            all_data_closure = [ω_closure, ω_pred_closure, ω_error_map]
+            v_min_state = minimum([minimum(data) for data in all_data_state])
+            v_max_state = maximum([maximum(data) for data in all_data_state])
+            v_min_closure = minimum([minimum(data) for data in all_data_closure])
+            v_max_closure = maximum([maximum(data) for data in all_data_closure])
+
+            p1 = Plots.heatmap(ω_nomodel'; xlabel = "x", ylabel="y", title=title_nomodel, color=:viridis, clim = (v_min_state, v_max_state))
+            p2 = Plots.heatmap(ω_model'; xlabel = "x", ylabel = "y", title=title_model, color=:viridis, clim = (v_min_state, v_max_state))
+            p3 = Plots.heatmap(ω_groundtruth'; xlabel = "x", ylabel = "y", title=title_groundtruth, color=:viridis, clim = (v_min_state, v_max_state))
+            p4 = Plots.heatmap(ω_closure'; xlabel="x", ylabel="y", title=title_closure, color=:viridis, clim = (v_min_closure, v_max_closure))
+            p5 = Plots.heatmap(ω_pred_closure'; xlabel="x", ylabel="y", title=title_pred_closure, color=:viridis, clim = (v_min_closure, v_max_closure))
+            p6 = Plots.heatmap(ω_error_map'; xlabel="x", ylabel="y", title=title_error, color=:viridis, clim = (v_min_closure, v_max_closure))
+
+            # Plot energy spectra
+            energy_spectrum_plot = Plots.plot(K_bins, energy_nomodel[:,1], label="No Model", xaxis=:log, yaxis=:log,
+                                              xlabel="Wavenumber k", ylabel="Energy E(k)",
+                                              title="Energy Spectrum at t=$(round(t, digits=3))")
+            Plots.plot!(energy_spectrum_plot, K_bins, energy_model[:,1], label="Model")
+            Plots.plot!(energy_spectrum_plot, K_bins, energy_groundtruth[:,1], label="Ground Truth")
+
+            # Combine all plots into one figure
+            combined_fig = Plots.plot(p1, p2, p3, p4, p5, p6, energy_spectrum_plot, layout=(3, 3), size=(3200, 2400))
+            savefig(combined_fig, @sprintf("figures/deterministic_model/combined_timestep_%03d.png", i))
+
+            # Print the computed error
+            println("Error between model and ground truth at t = ", t, ": ", mean(ω_error_map))
+        end
+    end
+end
+
+function inference_deterministic_without_ground_truth(dt, nt, batch_size, v_test, velocity_cnn, ps_drift, _st_drift, closure_means, closure_std, state_means, state_std, N_les, Re; dev)
+    create_right_hand_side(setup, psolver) = function right_hand_side(u, p, t)
+        u = pad_circular(u, 1; dims = 1:2)
+        F = INS.momentum(u, nothing, t, setup)
+        F = F[2:end-1, 2:end-1, :]
+        F = pad_circular(F, 1; dims = 1:2)
+        PF = INS.project(F, setup; psolver)
+        PF[2:end-1, 2:end-1, :]
+    end
+
+    backend = CUDABackend();
+    x_les = LinRange(0.0, 1.0, N_les + 1), LinRange(0.0, 1.0, N_les + 1);
+    setup_les = INS.Setup(; x=x_les, Re=Re, backend);
+    psolver_les = INS.psolver_spectral(setup_les);
+    f_les = create_right_hand_side(setup_les, psolver_les); 
+    
+    global t = 0.0f0; 
+    global u_les = v_test[:,:,:,1]; 
+    u_les = reshape(u_les, N_les, N_les, 2, batch_size) |> dev; 
+    global ubar_test = u_les |> dev; 
+    t_sample = Float32.(fill(0, 1, 1, 1, batch_size)) |> dev
+
+    for i=1:nt+1
+        global u_les, ubar_test
+        if i > 1
+            global t
+            u_les = step_rk4(u_les, dt, f_les) |> dev;
+            stand_input = standardize_training_set_per_channel(ubar_test, state_means, state_std; one_trajectory=true) |> dev;
+            stand_closure, _ = Lux.apply(velocity_cnn, (stand_input, t_sample), ps_drift, _st_drift) |> dev;   
+            closure = inverse_standardize_set_per_channel(stand_closure, closure_means, closure_std; one_trajectory=true) |> dev;
+            ubar_test = step_rk4(ubar_test, dt, f_les) .+ (dt .* closure)
+            # ubar_test = rk4_with_closure_deterministic(ubar_test, ubar_test, state_means, state_std, velocity_cnn, ps_drift, _st_drift, closure_means, closure_std, dt, batch_size, f_les; dev) |> dev;
+            t += dt
+        end
+        
+        if i % 100 == 0 # && i > 1
+            t = (i-1) * dt
+            ω_model = Array(INS.vorticity(pad_circular(ubar_test, 1; dims = 1:2), setup_les))[:,:,1]
+            ω_nomodel = Array(INS.vorticity(pad_circular(u_les, 1; dims=1:2), setup_les))[:,:,1]
+            ω_model = ω_model[2:end-1, 2:end-1];
+            ω_nomodel = ω_nomodel[2:end-1, 2:end-1];
+            ω_pred_closure = abs.(ω_model - ω_nomodel);
+            energy_nomodel, K_bins = compute_energy_spectra(Array(u_les))
+            energy_model, _ = compute_energy_spectra(Array(ubar_test))
+            title_model = @sprintf("Vorticity model, t = %.3f", t)
+            title_nomodel = @sprintf("Vorticity no model, t=%.3f", t)
+            title_pred_closure = @sprintf("Predicted closure, t=%.3f", t)
+
+            all_data_state = [ω_model, ω_nomodel]
+            v_min_state = minimum([minimum(data) for data in all_data_state])
+            v_max_state = maximum([maximum(data) for data in all_data_state])
+
+            p1 = Plots.heatmap(ω_nomodel'; xlabel = "x", ylabel="y", title=title_nomodel, color=:viridis, clim = (v_min_state, v_max_state))
+            p2 = Plots.heatmap(ω_model'; xlabel = "x", ylabel = "y", title=title_model, color=:viridis, clim = (v_min_state, v_max_state))
+            p3 = Plots.heatmap(ω_pred_closure'; xlabel="x", ylabel="y", title=title_pred_closure, color=:viridis) 
+
+            # Plot energy spectra
+            energy_spectrum_plot = Plots.plot(K_bins, energy_nomodel[:,1], label="No Model", xaxis=:log, yaxis=:log,
+                                              xlabel="Wavenumber k", ylabel="Energy E(k)",
+                                              title="Energy Spectrum at t=$(round(t, digits=3))")
+            Plots.plot!(energy_spectrum_plot, K_bins, energy_model[:,1], label="Model")
+
+            # Combine all plots into one figure
+            combined_fig = Plots.plot(p1, p2, p3, energy_spectrum_plot, layout=(2, 2), size=(2400, 2400))
+            savefig(combined_fig, @sprintf("figures/deterministic_model/inf_combined_timestep_%03d.png", i))
+        end
+    end
+end

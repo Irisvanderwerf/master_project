@@ -11,7 +11,8 @@ include("evaluation.jl")
 # include("cnn.jl")
 # include("u-net_residual.jl")
 # include("u-net_conv.jl")
-include("u-net_conv_conditioned.jl")
+# include("u-net_conv_conditioned.jl")
+include("u-net_conv_cond_attention.jl")
 # include("u-net_conv_conditioned_complex.jl")
 
 # # Add functions for Navier Stokes simulations - spectral decomposition
@@ -36,16 +37,20 @@ export standardize_training_set_per_channel
 export inverse_standardize_set_per_channel
 export generate_or_load_data
 export generate_or_load_standardized_data
+export print_min_max
+export compute_velocity_magnitude
+export plot_velocity_magnitudes
+export create_training_sets
 
-# Add functions for data 
-export reshape_mnist_data
-export load_mnist_data
-export plot_images
-export load_mnist_labels
-export generate_gaussian_images
-export reshape_images
-export filter_mnist_data
-export labels_to_images
+# # Add functions for data 
+# export reshape_mnist_data
+# export load_mnist_data
+# export plot_images
+# export load_mnist_labels
+# export generate_gaussian_images
+# export reshape_images
+# export filter_mnist_data
+# export labels_to_images
 
 # Add functions for stochastic interpolant
 export stochastic_interpolant
@@ -54,6 +59,9 @@ export time_derivative_stochastic_interpolant
 
 # # Add the CNN
 # export build_NN
+
+export rk4_with_closure_deterministic
+export inference_deterministic
 
 # # Add functions for first u-net - residual
 # export sinusoidal_embedding
@@ -74,10 +82,15 @@ export time_derivative_stochastic_interpolant
 
 # Add functions for fourth u-net - conditioning & handle complex and real numbers seperately 
 export sinusoidal_embedding
-export ConvNextBlock_up
-export ConvNextBlock_down
+# export ConvNextBlock_up
+# export ConvNextBlock_down
 export UNet
 export build_full_unet
+
+export gpu_attention_broadcast
+export SelfAttentionBlock
+export ConvNextBlock_down_with_attention
+export ConvNextBlock_up_with_attention
 
 # Add functions for training - ODE or SDE
 export loss_fn
@@ -87,6 +100,8 @@ export train!
 export save_model
 export load_model
 export initialize_or_load_model
+export relative_root_mse
+export train_deterministic!
 
 # Add functions for generating closure - ODE or SDE
 export forward_euler
@@ -104,8 +119,13 @@ export euler_maruyama
 export compute_score_denoiser
 export compute_score_velocity
 export inference
-export compute_energy_spectrum
-export radial_binning
+# export compute_energy_spectrum
+# export radial_binning
+export compute_energy_spectra
+export compute_total_energy
+# export runge_kutta_4_closure_term
+export rk4_with_closure
+export inference_deterministic_without_ground_truth
 
 # evaluation of the network
 export mean_squared_error

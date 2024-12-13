@@ -3,6 +3,55 @@ using Random
 using NNlib
 using LuxCUDA
 using FFTW
+using CUDA
+
+z = CUDA.functional() ? CUDA.zeros : (s...) -> zeros(Float32, s...)
+ArrayType = CUDA.functional() ? CuArray : Array
+CUDA.allowscalar(false)
+
+
+function gpu_attention_broadcast(query, key, value)
+    hw, d, b = size(query)
+    _, c, _ = size(value)
+    output = zeros(Float32, hw, c, b)
+
+    for i in 1:b
+        q_i = query[:, :, i] 
+        k_i = key[:, :, i] 
+        v_i = value[:, :, i]
+        attn_weights = softmax(q_i * k_i' ; dims=1)
+        output[:, :, i] .= attn_weights * v_i
+    end
+
+    return output
+end
+
+function SelfAttentionBlock(;
+    in_channels::Int64,
+)
+    @compact(
+        query_proj = Conv((1, 1), in_channels => in_channels ÷ 8),
+        key_proj = Conv((1, 1), in_channels => in_channels ÷ 8),
+        value_proj = Conv((1, 1), in_channels => in_channels),
+        proj_out = Conv((1, 1), in_channels => in_channels),
+    ) do x
+        h, w, c, b = size(x)
+        query = Array(reshape(query_proj(x), h * w, c ÷ 8, b)) # (h, w, c/8, batch_size) -> (hw, c/8, batch_size)
+        key = Array(reshape(key_proj(x), h * w, c ÷ 8, b))  # (h, w, c/8, batch_size) -> (hw, c/8, batch_size)
+        value = Array(reshape(value_proj(x), h * w, c, b))  # (h, w, c, batch_size) -> (hw, c, batch_size)
+
+        # Compute attention weights
+        attention = gpu_attention_broadcast(query, key, value) # (hw, c, batch_size)
+        # println(" compute attention ")
+        # (c/8, hw, batch_size) x  (c/8, hw, batch_size) -> Attention: (hw, hw, batch_size)
+
+        out = CuArray(reshape(attention, h, w, c, b)) # Reshape to (height, width, channels, batch_size)
+        println("convert to right size")
+
+        # Apply output projection and residual connection
+        return proj_out(out) .+ x  # Residual connection
+    end
+end
 
 # Sinusoidal embedding for the time
 function sinusoidal_embedding(x, 
@@ -23,87 +72,96 @@ function sinusoidal_embedding(x,
     return dropdims(embeddings, dims=(1, 2))
 end
 
-# ConvNextBlock definition where we include time embedding - for the down scaling. (same as the one without conditioning)
-function ConvNextBlock_down(;
-    in_channels::Int, 
+function ConvNextBlock_down_with_attention(;
+    in_channels::Int,
     out_channels::Int,
     multiplier::Int = 1,
     embedding_dim::Int = 1,
 )
     @compact(
-        ds_conv = Conv((7, 7), in_channels => in_channels; pad=3),  
+        ds_conv = Conv((7, 7), in_channels => in_channels; pad=3),
         pars_mlp = Lux.Dense(embedding_dim => in_channels),
+        attention = SelfAttentionBlock(in_channels=in_channels),  # Use the modular SelfAttentionBlock
         dropout1 = Dropout(0.3),
         conv_net = Chain(
             Lux.InstanceNorm(in_channels),
-            Conv((3, 3), in_channels => in_channels * multiplier, pad=(1,1)),  
+            Conv((3, 3), in_channels => in_channels * multiplier, pad=(1,1)),
             NNlib.gelu,
             Dropout(0.3),
             InstanceNorm(in_channels * multiplier),
-            Lux.Conv((3, 3), in_channels * multiplier => out_channels, pad=(1,1))  
+            Lux.Conv((3, 3), in_channels * multiplier => out_channels, pad=(1,1))
         ),
-        res_conv = Conv((1, 1), in_channels => out_channels; pad=0)  
+        res_conv = Conv((1, 1), in_channels => out_channels; pad=0)
     ) do x
         x, pars = x
-        h = ds_conv(x) 
+        h = ds_conv(x)
         h = dropout1(h)
-    
+        # println(" The size of the input of attention: ", size(h))
+
+        # Apply attention
+        h = attention(h)
+        # println(" The size of the output of attention: ", size(h))
+
         # Process time embeddings
-        pars = pars_mlp(pars) 
-        pars = reshape(pars, 1, 1, size(pars)...) 
-    
+        pars = pars_mlp(pars)
+        pars = reshape(pars, 1, 1, size(pars)...)
+
         # Add time embedding to conv features
         h = h .+ pars
-    
-        h = conv_net(h) 
+
+        h = conv_net(h)
         
         # Add residual connection
-        @return h .+ res_conv(x) 
+        @return h .+ res_conv(x)
     end
 end
 
-# ConvNextBlock definition where we include time embedding and conditioning - for upscaling part. 
-function ConvNextBlock_up(;
-    in_channels::Int, 
+# ConvNextBlock Up with Self-Attention
+function ConvNextBlock_up_with_attention(;
+    in_channels::Int,
     out_channels::Int,
     multiplier::Int = 1,
     embedding_dim::Int = 1,
     cond_channels = 1,
-) # dropout_rate
+)
     @compact(
-        ds_conv = Conv((7, 7), in_channels => in_channels; pad=3),  
+        ds_conv = Conv((7, 7), in_channels => in_channels; pad=3),
         pars_mlp = Lux.Dense(embedding_dim => in_channels),
+        attention = SelfAttentionBlock(in_channels=in_channels),
         cond_conv = Conv((1, 1), cond_channels => in_channels; pad=0),
         dropout1 = Dropout(0.1),
         conv_net = Chain(
             Lux.InstanceNorm(in_channels),
-            Conv((3, 3), in_channels => in_channels * multiplier, pad=(1,1)),  
+            Conv((3, 3), in_channels => in_channels * multiplier, pad=(1,1)),
             NNlib.gelu,
             Dropout(0.1),
             InstanceNorm(in_channels * multiplier),
-            Lux.Conv((3, 3), in_channels * multiplier => out_channels, pad=(1,1))  
+            Lux.Conv((3, 3), in_channels * multiplier => out_channels, pad=(1,1))
         ),
-        res_conv = Conv((1, 1), in_channels => out_channels; pad=0)  
+        res_conv = Conv((1, 1), in_channels => out_channels; pad=0)
     ) do x
         x, pars, cond = x
-        
-        h = ds_conv(x) # (32, 32, E, B)
-        h = dropout1(h) # (32, 32, E, B)
-    
+
+        h = ds_conv(x)
+        h = dropout1(h)
+
+        # Add attention
+        h = attention(h)
+
         # Process time embeddings
-        pars = pars_mlp(pars) # (E,B)
-        pars = reshape(pars, 1, 1, size(pars)...) # (1,1,E,B)
+        pars = pars_mlp(pars)
+        pars = reshape(pars, 1, 1, size(pars)...)
 
         # Process 2D condition (label image) features
-        cond = cond_conv(cond) 
-    
+        cond = cond_conv(cond)
+
         # Add time embedding to conv features
         h = (h .+ pars) .* cond
-    
-        h = conv_net(h) 
-        
+
+        h = conv_net(h)
+
         # Add residual connection
-        @return h .+ res_conv(x) 
+        @return h .+ res_conv(x)
     end
 end
 
@@ -117,25 +175,25 @@ function UNet(
 ) # dropout_rate
     return @compact(
         # Down-sampling path - using no conditioning for down-scaling
-        conv_next_down1 = ConvNextBlock_down(in_channels=in_channels, out_channels=hidden_channels[1], embedding_dim=embedding_dim),
+        conv_next_down1 = ConvNextBlock_down_with_attention(in_channels=in_channels, out_channels=hidden_channels[1], embedding_dim=embedding_dim),
         down1 = Chain(
             Conv((4,4), hidden_channels[1] => hidden_channels[1]; pad=1, stride=(2,2)),
             Dropout(0.3)
         ),
 
-        conv_next_down2 = ConvNextBlock_down(in_channels=hidden_channels[1], out_channels=hidden_channels[2], embedding_dim=embedding_dim),
+        conv_next_down2 = ConvNextBlock_down_with_attention(in_channels=hidden_channels[1], out_channels=hidden_channels[2], embedding_dim=embedding_dim),
         down2 = Chain(
             Conv((4,4), hidden_channels[2] => hidden_channels[2]; pad=1, stride=(2,2)),
             Dropout(0.3)
         ),
 
-        conv_next_down3 = ConvNextBlock_down(in_channels=hidden_channels[2], out_channels=hidden_channels[3], embedding_dim=embedding_dim),
+        conv_next_down3 = ConvNextBlock_down_with_attention(in_channels=hidden_channels[2], out_channels=hidden_channels[3], embedding_dim=embedding_dim),
         down3 = Chain(
             Conv((4,4), hidden_channels[3] => hidden_channels[3]; pad=1, stride=(2,2)),
             Dropout(0.3)
         ),
 
-        conv_next_down4 = ConvNextBlock_down(in_channels=hidden_channels[3], out_channels=hidden_channels[4], embedding_dim=embedding_dim),
+        conv_next_down4 = ConvNextBlock_down_with_attention(in_channels=hidden_channels[3], out_channels=hidden_channels[4], embedding_dim=embedding_dim),
         down4 = Chain(
             Conv((4,4), hidden_channels[4] => hidden_channels[4]; pad=1, stride=(2,2)),
             Dropout(0.3)
@@ -164,7 +222,7 @@ function UNet(
         ),
 
         # Bottom layer
-        bottom = ConvNextBlock_down(in_channels=hidden_channels[4], out_channels=hidden_channels[4], embedding_dim=embedding_dim), #, cond_channels=hidden_channels[3]),
+        bottom = ConvNextBlock_down_with_attention(in_channels=hidden_channels[4], out_channels=hidden_channels[4], embedding_dim=embedding_dim), #, cond_channels=hidden_channels[3]),
 
         # # Bottom layer with conditioning
         # bottom = ConvNextBlock_up(in_channels=hidden_channels[3], out_channels=hidden_channels[3], embedding_dim=embedding_dim, cond_channels=hidden_channels[3]),
@@ -178,26 +236,26 @@ function UNet(
             ConvTranspose((4,4), hidden_channels[4] => hidden_channels[4]; pad=1, stride=(2,2)),
             Dropout(0.1)
         ),
-        conv_next_up4 = ConvNextBlock_up(in_channels=2*hidden_channels[4], out_channels=hidden_channels[3], embedding_dim=embedding_dim, cond_channels=2*hidden_channels[4]),
+        conv_next_up4 = ConvNextBlock_up_with_attention(in_channels=2*hidden_channels[4], out_channels=hidden_channels[3], embedding_dim=embedding_dim, cond_channels=2*hidden_channels[4]),
 
         # Up-sampling path
         up3  = Chain(
             ConvTranspose((4,4), hidden_channels[3] => hidden_channels[3]; pad=1, stride=(2,2)),
             Dropout(0.1)
         ),
-        conv_next_up3 = ConvNextBlock_up(in_channels=2*hidden_channels[3], out_channels=hidden_channels[2], embedding_dim=embedding_dim, cond_channels=2*hidden_channels[3]),
+        conv_next_up3 = ConvNextBlock_up_with_attention(in_channels=2*hidden_channels[3], out_channels=hidden_channels[2], embedding_dim=embedding_dim, cond_channels=2*hidden_channels[3]),
 
         up2 = Chain(
             ConvTranspose((4,4), hidden_channels[2] => hidden_channels[2]; pad=1, stride=(2,2)),
             Dropout(0.1)
         ),
-        conv_next_up2 = ConvNextBlock_up(in_channels=2*hidden_channels[2], out_channels=hidden_channels[1], embedding_dim=embedding_dim, cond_channels=2*hidden_channels[2]),
+        conv_next_up2 = ConvNextBlock_up_with_attention(in_channels=2*hidden_channels[2], out_channels=hidden_channels[1], embedding_dim=embedding_dim, cond_channels=2*hidden_channels[2]),
 
         up1 = Chain(
             ConvTranspose((4,4), hidden_channels[1] => hidden_channels[1]; pad=1, stride=(2,2)),
             Dropout(0.1)
         ),
-        conv_next_up1 = ConvNextBlock_up(in_channels=2*hidden_channels[1], out_channels=hidden_channels[1], embedding_dim=embedding_dim, cond_channels=2*hidden_channels[1]),
+        conv_next_up1 = ConvNextBlock_up_with_attention(in_channels=2*hidden_channels[1], out_channels=hidden_channels[1], embedding_dim=embedding_dim, cond_channels=2*hidden_channels[1]),
 
         # Output layer
         final_conv = Conv((1, 1), hidden_channels[1] => out_channels, use_bias=false),

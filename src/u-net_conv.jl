@@ -4,12 +4,12 @@ using NNlib
 using LuxCUDA
 
 # Sinusoidal embedding for the time
-function sinusoidal_embedding(x, min_freq::AbstractFloat, max_freq::AbstractFloat, embedding_dims::Int)
+function sinusoidal_embedding(x, min_freq::AbstractFloat, max_freq::AbstractFloat, embedding_dims::Int; dev)
     lower = log(min_freq)
     upper = log(max_freq)
     n = div(embedding_dims, 2)
     d = (upper - lower) / (n - 1)
-    freqs = exp.(lower:d:upper) # |> gpu_device()
+    freqs = exp.(lower:d:upper) |> dev
     
     angular_speeds = reshape(2.0f0 * π * freqs, (1, 1, length(freqs), 1))
     
@@ -28,10 +28,12 @@ function ConvNextBlock(;
     @compact(
         ds_conv = Conv((7, 7), in_channels => in_channels; pad=3),  
         pars_mlp = Lux.Dense(embedding_dim => in_channels),
+        dropout1 = Dropout(0.2),
         conv_net = Chain(
             Lux.InstanceNorm(in_channels),
             Conv((3, 3), in_channels => in_channels * multiplier, pad=(1,1)),  
             NNlib.gelu,
+            Dropout(0.2),
             InstanceNorm(in_channels * multiplier),
             Lux.Conv((3, 3), in_channels * multiplier => out_channels, pad=(1,1))  
         ),
@@ -40,6 +42,7 @@ function ConvNextBlock(;
         x, pars = x
         
         h = ds_conv(x) 
+        h = dropout1(h)
     
         # Process time embeddings
         pars = pars_mlp(pars) 
@@ -82,7 +85,7 @@ end
 # Main U-Net architecture with time embedding and ConvNextBlocks
 function UNet(
     in_channels = 1,
-    out_channels = 1,
+    out_channels = 2,
     hidden_channels = [16, 32, 64],
     embedding_dim = 8,
 )
@@ -132,12 +135,12 @@ function UNet(
 end
 
 # Full U-Net model with time embedding
-function build_full_unet(embedding_dim = 8, hidden_channels = [16, 32, 64], t_pars_embedding_dim = 8)
+function build_full_unet(embedding_dim = 8, hidden_channels = [16, 32, 64], t_pars_embedding_dim = 8; dev)
     return @compact(
-        conv_in = Conv((3, 3), 1 => embedding_dim, leakyrelu, pad=(1,1)),
-        u_net = UNet(embedding_dim, 1, hidden_channels, embedding_dim), 
+        conv_in = Conv((3, 3), 2 => embedding_dim, leakyrelu, pad=(1,1)),
+        u_net = UNet(embedding_dim, 2, hidden_channels, embedding_dim), 
         t_embedding = Chain(
-            t -> sinusoidal_embedding(t, 1.0f0, 1000.0f0, t_pars_embedding_dim),
+            t -> sinusoidal_embedding(t, 1.0f0, 1000.0f0, t_pars_embedding_dim; dev),
             # t -> reshape(t,:,size(t,4)), # Flatten the t_sample
             Lux.Dense(t_pars_embedding_dim => embedding_dim),
             NNlib.gelu,
