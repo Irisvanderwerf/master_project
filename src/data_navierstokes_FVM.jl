@@ -20,11 +20,12 @@ using IncompressibleNavierStokes
 const INS = IncompressibleNavierStokes
 using OrdinaryDiffEq
 
+using BSON
+
 z = CUDA.functional() ? CUDA.zeros : (s...) -> zeros(Float32, s...)
 ArrayType = CUDA.functional() ? CuArray : Array
 CUDA.allowscalar(false)
 
-# The following function performsone RK4 time step. 
 function step_rk4(u0, dt, F)
     a = (
         (0.5f0,),
@@ -69,14 +70,12 @@ function face_average_syver!(v, u, setup_les, comp)
     v
 end
 
-# Function to compute mean and standard deviation per channel
 function compute_mean_std(training_set)
     means = [mean(training_set[:,:,c,:,:]) for c in 1:2]
     stds = [std(training_set[:,:,c,:,:]) for c in 1:2]
     return means, stds
 end
 
-# Function to standardize the training set per channel
 function standardize_training_set_per_channel(training_set, means, stds; one_trajectory=false)
     standardized_set = similar(training_set)
     if !one_trajectory 
@@ -92,7 +91,6 @@ function standardize_training_set_per_channel(training_set, means, stds; one_tra
     end
 end
 
-# Function of the inverse standardization per channel
 function inverse_standardize_set_per_channel(training_set, means, stds; one_trajectory=false)
     inverse_standardized_set = similar(training_set)
     if !one_trajectory
@@ -108,16 +106,89 @@ function inverse_standardize_set_per_channel(training_set, means, stds; one_traj
     end
 end
 
-function generate_or_load_data(N_dns, N_les, Re, v_train_path, c_train_path, v_test_path, c_test_path, generate_new_data, nt, dt, num_initial_conditions, num_train_conditions; dev)
-    if !generate_new_data && isfile(v_train_path) && isfile(c_train_path)
-        # Load existing data if available
-        println("Loading existing training and test dataset...")
-        v_train = deserialize(v_train_path)
-        c_train = deserialize(c_train_path)
-        v_test = deserialize(v_test_path)
-        c_test = deserialize(c_test_path)
+function save_large_bson(filepath, data)
+    Base.@eval BSON begin
+        function bson_primitive(io::IO, x::Int64)
+            write(io, x)
+        end
+    end
+    max_chunk_size = 10^7 
+    dims = size(data)
+    element_size = sizeof(eltype(data))
+    chunk_size = max(1, div(max_chunk_size, dims[1] * dims[2] * dims[3] * element_size))
+
+    metadata_filepath = filepath * "_metadata.bson" 
+    BSON.@save(metadata_filepath, dims=dims)
+
+    existing_files = filter(x -> occursin("$(basename(filepath))_part_", x), readdir(dirname(filepath)))
+    foreach(f -> rm(joinpath(dirname(filepath), f)), existing_files)
+
+    for i in 1:chunk_size:dims[4]
+        part = data[:, :, :, i:min(i + chunk_size - 1, dims[4])]
+        part_filepath = joinpath(dirname(filepath), "$(basename(filepath))_part_$i.bson")
+        BSON.@save(part_filepath, data=part)
+    end
+end
+
+function load_large_bson(filepath)
+    metadata_filepath = filepath * "_metadata.bson"
+    alt_metadata_filepath = filepath * ".bson_metadata.bson"
+
+    if isfile(metadata_filepath)
+        metadata = BSON.load(metadata_filepath)
+    elseif isfile(alt_metadata_filepath)
+        metadata = BSON.load(alt_metadata_filepath)
     else
-        println("Generating new training and test dataset...")
+        error("Metadata file not found for $(filepath)")
+    end
+
+    dims = metadata[:dims]
+
+    parts = []
+    part_files = sort(filter(x -> occursin("$(basename(filepath))_part_", x), readdir(dirname(filepath))))
+    for file in part_files
+        part_data = BSON.load(joinpath(dirname(filepath), file))[:data]
+        push!(parts, part_data)
+    end
+
+    return cat(parts..., dims=4)
+end
+
+function generate_or_load_data(N_dns, LES_resolutions, Re, output_dir, generate_new_data, nt, dt, num_trajectories; dev)
+    isdir(output_dir) || mkdir(output_dir)
+    data_v = Dict{Int, Array}()
+    data_c = Dict{Int, Array}()
+
+    if !generate_new_data
+        println("Loading existing trajectories...")
+        for N_les in LES_resolutions
+            resolution_dir = joinpath(output_dir, "LES_$(N_les)")
+            v_all = []
+            c_all = []
+        
+            for cond in 1:num_trajectories
+                filepath_v = joinpath(resolution_dir, "v_cond_$cond")
+                filepath_c = joinpath(resolution_dir, "c_cond_$cond")
+        
+                part_files_v = filter(x -> startswith(x, "v_cond_$(cond).bson_part_"), readdir(resolution_dir))
+                part_files_c = filter(x -> startswith(x, "c_cond_$(cond).bson_part_"), readdir(resolution_dir))
+        
+                if isempty(part_files_v) || isempty(part_files_c)
+                    error("Missing trajectory files for LES resolution $N_les condition $cond in $resolution_dir")
+                end
+        
+                v = load_large_bson(filepath_v)
+                c = load_large_bson(filepath_c)
+        
+                push!(v_all, v)
+                push!(c_all, c)
+            end
+        
+            data_v[N_les] = cat(v_all..., dims=5)
+            data_c[N_les] = cat(c_all..., dims=5)
+        end       
+    else
+        println("Generating new dataset for each LES resolution...")
 
         create_right_hand_side(setup, psolver) = function right_hand_side(u, p, t)
             u = pad_circular(u, 1; dims = 1:2)
@@ -128,193 +199,227 @@ function generate_or_load_data(N_dns, N_les, Re, v_train_path, c_train_path, v_t
             PF[2:end-1, 2:end-1, :]
         end
 
-        backend = CUDABackend();
-        # Setup DNS - Grid
-        x_dns = LinRange(0.0, 1.0, N_dns + 1), LinRange(0.0, 1.0, N_dns + 1);
-        setup_dns = INS.Setup(; x=x_dns, Re=Re, backend);
-        # Setup DNS - psolver
-        psolver_dns = INS.psolver_spectral(setup_dns);
-        # Setup LES - Grid 500
-        x_les = LinRange(0.0, 1.0, N_les + 1), LinRange(0.0, 1.0, N_les + 1);
-        setup_les = INS.Setup(; x=x_les, Re=Re, backend);
-        # Setup LES - psolver
-        psolver_les = INS.psolver_spectral(setup_les);
-        # SciML-compatible right hand side function
-        f_dns = create_right_hand_side(setup_dns, psolver_dns);
-        f_les = create_right_hand_side(setup_les, psolver_les); 
-    
-        # Initialize empty arrays for concatenating training data
-        v_train = nothing;
-        c_train = nothing;
-        v_test = nothing; 
-        c_test = nothing; 
+        backend = CUDABackend()
+        x_dns = LinRange(0.0, 1.0, N_dns + 1), LinRange(0.0, 1.0, N_dns + 1)
+        setup_dns = INS.Setup(; x=x_dns, Re=Re, backend)
+        psolver_dns = INS.psolver_spectral(setup_dns)
+        f_dns = create_right_hand_side(setup_dns, psolver_dns)
 
-        anim = Animation()
-        for cond in 1:num_initial_conditions
-            println("Generating data for initial condition $cond")
-            # GPU version
-            v = zeros(N_les, N_les, 2, nt + 1, 1) |> dev;
-            c = zeros(N_les, N_les, 2, nt + 1, 1) |> dev;
-            global u = INS.random_field(setup_dns, 0.0) |> dev;
-            global u = u[2:end-1, 2:end-1, :];
-            nburn = 500; # number of steps to stabilize the simulation before collecting data.
-            for i = 1:nburn
-                u = step_rk4(u, dt, f_dns)
-            end
-            # Generate time evolution data
-            global t = 0;
-            for i = 1:nt+1
-                # Update DNS solution at each timestep
-                if i > 1
-                    global u
-                    t += dt
+        for N_les in LES_resolutions
+            println("Generating data for LES resolution $N_les...")
+            resolution_dir = joinpath(output_dir, "LES_$(N_les)")
+            isdir(resolution_dir) || mkdir(resolution_dir)
+
+            x_les = LinRange(0.0, 1.0, N_les + 1), LinRange(0.0, 1.0, N_les + 1)
+            setup_les = INS.Setup(; x=x_les, Re=Re, backend)
+            psolver_les = INS.psolver_spectral(setup_les)
+            f_les = create_right_hand_side(setup_les, psolver_les)
+
+            v_all = []
+            c_all = []
+
+            for cond in 1:num_trajectories
+                println("Generating data for trajectory $cond at LES resolution $N_les")
+                v = []
+                c = []
+
+                global u = INS.random_field(setup_dns, 0.0) |> dev
+                global u = u[2:end-1, 2:end-1, :]
+
+                nburn = 5000
+                for i = 1:nburn
                     u = step_rk4(u, dt, f_dns)
                 end
-                u = pad_circular(u, 1; dims = 1:2);
-                comp = div(N_dns, N_les)
-                ubar = face_average_syver(u, setup_les, comp);
 
-                ubar = ubar[2:end-1, 2:end-1, :];
-                u = u[2:end-1, 2:end-1, :];
-                input_filtered_RHS = pad_circular(f_dns(u, nothing, 0.0), 1; dims=1:2);
-                filtered_RHS = face_average_syver(input_filtered_RHS, setup_les, comp);
+                global t = 0
+                for i = 1:nt+1
+                    if i > 1
+                        global u
+                        t += dt
+                        u = step_rk4(u, dt, f_dns)
+                    end
 
-                filtered_RHS = filtered_RHS[2:end-1, 2:end-1, :];      
-                RHS_ubar = f_les(ubar, nothing, 0.0);
-                c[:, :, :, i, 1] = Array(filtered_RHS - RHS_ubar);
-                v[:, :, :, i, 1] = Array(ubar);
-                # Generate visualizations every 10 steps
-                # if i % 100 == 0
-                #     ω_dns = Array(INS.vorticity(pad_circular(u, 1; dims = 1:2), setup_dns))
-                #     ω_les = Array(INS.vorticity(pad_circular(ubar, 1; dims = 1:2), setup_les))
-                #     ω_dns = ω_dns[2:end-1, 2:end-1];
-                #     ω_les = ω_les[2:end-1, 2:end-1];
-                #     title_dns = @sprintf("Vorticity (DNS), t = %.3f", t)
-                #     title_les = @sprintf("Vorticity (Filtered DNS), t = %.3f", t)
-                #     p1 = Plots.heatmap(ω_dns'; xlabel = "x", ylabel = "y", title = title_dns, color=:viridis)
-                #     p2 = Plots.heatmap(ω_les'; xlabel = "x", ylabel = "y", title = title_les, color=:viridis)
-                #     fig = Plots.plot(p1, p2, layout = (1, 2), size=(1200, 400))
-                #     frame(anim, fig)
-                # end
+                    if i % 10 == 0
+                        u = pad_circular(u, 1; dims = 1:2)
+                        comp = div(N_dns, N_les)
+                        ubar = face_average_syver(u, setup_les, comp)
+
+                        ubar = ubar[2:end-1, 2:end-1, :]
+                        u = u[2:end-1, 2:end-1, :]
+                        input_filtered_RHS = pad_circular(f_dns(u, nothing, 0.0), 1; dims=1:2)
+                        filtered_RHS = face_average_syver(input_filtered_RHS, setup_les, comp)
+
+                        filtered_RHS = filtered_RHS[2:end-1, 2:end-1, :]
+                        RHS_ubar = f_les(ubar, nothing, 0.0)
+
+                        push!(c, Array(filtered_RHS - RHS_ubar))
+                        push!(v, Array(ubar))
+                    end
+                end
+
+                v = permutedims(cat(v..., dims=4), (1, 2, 3, 4))
+                c = permutedims(cat(c..., dims=4), (1, 2, 3, 4))
+
+                filepath_v = joinpath(resolution_dir, "v_cond_$cond")
+                filepath_c = joinpath(resolution_dir, "c_cond_$cond")
+
+                save_large_bson(filepath_v, v)
+                save_large_bson(filepath_c, c)
+
+                push!(v_all, v)
+                push!(c_all, c)
             end
 
-            if cond <= num_train_conditions
-                v_train = v_train === nothing ? v : cat(v_train, v; dims=5)
-                c_train = c_train === nothing ? c : cat(c_train, c; dims=5)
+            data_v[N_les] = cat(v_all..., dims=5)
+            data_c[N_les] = cat(c_all..., dims=5)
+        end
+    end
+
+    return data_v, data_c
+end
+
+function generate_or_load_standardized_data(
+    standardized_dir::String,
+    raw_data_v::Dict{Int, Array},
+    raw_data_c::Dict{Int, Array},
+    generate_new_data::Bool
+)
+    # Ensure the standardized directory exists
+    isdir(standardized_dir) || mkdir(standardized_dir)
+
+    standardized_data_v = Dict{Int, Array}()
+    standardized_data_c = Dict{Int, Array}()
+    stats = Dict{Int, Dict{Symbol, Array}}()
+
+    for (resolution, v_data) in raw_data_v
+        println("Processing LES resolution $resolution...")
+
+        resolution_dir = joinpath(standardized_dir, "LES_$resolution")
+        isdir(resolution_dir) || mkdir(resolution_dir)
+
+        # Paths for saving statistics
+        state_means_path = joinpath(resolution_dir, "state_means.bson")
+        state_std_path = joinpath(resolution_dir, "state_std.bson")
+        closure_means_path = joinpath(resolution_dir, "closure_means.bson")
+        closure_std_path = joinpath(resolution_dir, "closure_std.bson")
+
+        num_trajectories = size(v_data, 5)
+
+        # Check if statistics exist
+        if !generate_new_data && isfile(state_means_path) && isfile(state_std_path) &&
+           isfile(closure_means_path) && isfile(closure_std_path)
+            println("Loading existing statistics for resolution $resolution...")
+
+            # Load statistics
+            stats[resolution] = Dict(
+                :state_means => deserialize(state_means_path),
+                :state_std => deserialize(state_std_path),
+                :closure_means => deserialize(closure_means_path),
+                :closure_std => deserialize(closure_std_path)
+            )
+        else
+            println("Standardizing data for resolution $resolution...")
+
+            # Compute mean and std for state and closure
+            state_means, state_std = compute_mean_std(v_data)
+            closure_means, closure_std = compute_mean_std(raw_data_c[resolution])
+
+            # Save statistics
+            println("Saving statistics for resolution $resolution...")
+            serialize(state_means_path, state_means)
+            serialize(state_std_path, state_std)
+            serialize(closure_means_path, closure_means)
+            serialize(closure_std_path, closure_std)
+
+            # Store statistics in memory
+            stats[resolution] = Dict(
+                :state_means => state_means,
+                :state_std => state_std,
+                :closure_means => closure_means,
+                :closure_std => closure_std
+            )
+        end
+
+        # Storage for trajectories
+        v_all = []
+        c_all = []
+
+        # Process individual trajectories
+        println("Processing individual trajectories for resolution $resolution...")
+        for cond in 1:num_trajectories
+            filepath_v = joinpath(resolution_dir, "v_cond_$cond.bson")
+            filepath_c = joinpath(resolution_dir, "c_cond_$cond.bson")
+
+            if !generate_new_data && isfile(filepath_v) && isfile(filepath_c)
+                println("Loading existing standardized trajectory $cond for resolution $resolution...")
+                push!(v_all, BSON.load(filepath_v)[:data])
+                push!(c_all, BSON.load(filepath_c)[:data])
             else
-                v_test = v_test === nothing ? v : cat(v_test, v; dims=5)
-                c_test = c_test === nothing ? c : cat(c_test, c; dims=5)
+                println("Standardizing trajectory $cond for resolution $resolution...")
+
+                # Extract one trajectory (dim 5)
+                v_traj = v_data[:, :, :, :, cond]
+                c_traj = raw_data_c[resolution][:, :, :, :, cond]
+
+                # Standardize the trajectory
+                v_standardized = standardize_training_set_per_channel(v_traj, stats[resolution][:state_means], stats[resolution][:state_std])
+                c_standardized = standardize_training_set_per_channel(c_traj, stats[resolution][:closure_means], stats[resolution][:closure_std])
+
+                # Save the standardized trajectory
+                BSON.@save(filepath_v, data=v_standardized)
+                BSON.@save(filepath_c, data=c_standardized)
+
+                push!(v_all, v_standardized)
+                push!(c_all, c_standardized)
             end
         end
-        # gif(anim, "figures/vorticity_comparison_animation.gif")
 
-        println("Saving generated dataset...")
-        serialize(v_train_path, v_train)
-        serialize(c_train_path, c_train)
-        serialize(v_test_path, v_test)
-        serialize(c_test_path, c_test)
+        # Concatenate all trajectories along the fifth dimension
+        standardized_data_v[resolution] = cat(v_all..., dims=5)
+        standardized_data_c[resolution] = cat(c_all..., dims=5)
     end
-    return v_train, c_train, v_test, c_test 
+
+    return standardized_data_v, standardized_data_c, stats
 end
 
-function generate_or_load_standardized_data(v_train_standardized_path, c_train_standardized_path, v_test_standardized_path, c_test_standardized_path, generate_new_data, v_train, c_train, v_test, c_test, state_means_path, state_std_path, closure_means_path, closure_std_path)
-    if !generate_new_data && isfile(v_train_standardized_path) && isfile(c_train_standardized_path)
-        # Load existing data if available
-        println("Loading existing standardized training and test dataset...")
-        v_train_standardized = deserialize(v_train_standardized_path)
-        c_train_standardized = deserialize(c_train_standardized_path)
-        v_test_standardized = deserialize(v_test_standardized_path)
-        c_test_standardized = deserialize(c_test_standardized_path)
-
-        println("Loading means and std values...")
-        state_means = deserialize(state_means_path)
-        state_std = deserialize(state_std_path)
-        closure_means = deserialize(closure_means_path)
-        closure_std = deserialize(closure_std_path)
-    else
-        println("Standardize the training and test dataset...")
-        state_means, state_std = compute_mean_std(v_train);
-        closure_means, closure_std = compute_mean_std(c_train);
-
-        v_train_standardized = standardize_training_set_per_channel(v_train, state_means, state_std);
-        v_test_standardized = standardize_training_set_per_channel(v_test, state_means, state_std);
-
-        c_train_standardized = standardize_training_set_per_channel(c_train, closure_means, closure_std);
-        c_test_standardized = standardize_training_set_per_channel(c_test, closure_means, closure_std);
-
-        # Save generated data and means/std
-        println("Saving generated standardized dataset and mean/std values...")
-        serialize(v_train_standardized_path, v_train_standardized)
-        serialize(c_train_standardized_path, c_train_standardized)
-        serialize(v_test_standardized_path, v_test_standardized)
-        serialize(c_test_standardized_path, c_test_standardized)
-
-        serialize(state_means_path, state_means)
-        serialize(state_std_path, state_std)
-        serialize(closure_means_path, closure_means)
-        serialize(closure_std_path, closure_std)
-    end
-    return v_train_standardized, c_train_standardized, v_test_standardized, c_test_standardized, state_means, state_std, closure_means, closure_std
-end
-
-# Assuming v_train_standardized, c_train_standardized, v_test_standardized, c_test_standardized are defined
-function print_min_max(dataset, name)
-    println("$name:")
-    println("  Min: ", minimum(dataset))
-    println("  Max: ", maximum(dataset))
-end
 
 function compute_velocity_magnitude(v)
     @assert size(v, 3) == 2 "Input array must have 2 fields (v_x and v_y) in the third dimension."
-    
-    v_x = view(v, :, :, 1, :, :)  # Extract v_x
-    v_y = view(v, :, :, 2, :, :)  # Extract v_y
-
-    # Perform element-wise operations compatible with CPU and GPU
+    v_x = view(v, :, :, 1, :, :)
+    v_y = view(v, :, :, 2, :, :) 
     return sqrt.(v_x.^2 .+ v_y.^2)
 end
 
-function plot_velocity_magnitudes(v_train, v_test, c_train, c_test, v_train_standardized, v_test_standardized, c_train_standardized, c_test_standardized, time_step, trajectory)
-    # Compute velocity magnitudes for all datasets
+function plot_velocity_magnitudes(v_train, c_train, v_train_standardized, c_train_standardized, time_step, trajectory, N_les)
     datasets = [
-        ("v_train", compute_velocity_magnitude(v_train)[:, :, time_step, trajectory]),
-        ("c_train", compute_velocity_magnitude(c_train)[:, :, time_step, trajectory]),
-        ("v_test", compute_velocity_magnitude(v_test)[:, :, time_step, trajectory]),
-        ("c_test", compute_velocity_magnitude(c_test)[:, :, time_step, trajectory]),
-        ("v_train_stand", compute_velocity_magnitude(v_train_standardized)[:, :, time_step, trajectory]),
-        ("c_train_stand", compute_velocity_magnitude(c_train_standardized)[:, :, time_step, trajectory]),
-        ("v_test_stand", compute_velocity_magnitude(v_test_standardized)[:, :, time_step, trajectory]),
-        ("c_test_stand", compute_velocity_magnitude(c_test_standardized)[:, :, time_step, trajectory])      
+        ("v_train", compute_velocity_magnitude(v_train[N_les])[:, :, time_step, trajectory]),
+        ("c_train", compute_velocity_magnitude(c_train[N_les])[:, :, time_step, trajectory]),
+        ("v_train_stand", compute_velocity_magnitude(v_train_standardized[N_les])[:, :, time_step, trajectory]),
+        ("c_train_stand", compute_velocity_magnitude(c_train_standardized[N_les])[:, :, time_step, trajectory]),
     ]
-
-    # Convert GPU arrays to CPU before plotting
     plots = []
     for (label, data) in datasets
-        data_cpu = Array(data)  # Ensure the data is on the CPU
+        data_cpu = Array(data)
         push!(plots, Plots.heatmap(data_cpu'; xlabel = "x", ylabel = "y", title = label, color=:viridis))
     end
-
-    # Arrange the plots in a grid
-    fig = Plots.plot(plots..., layout = (2, 4), size=(2400, 800))
+    fig = Plots.plot(plots..., layout = (1, 4), size=(2400, 400))
     savefig(fig, "figures/velocity_magnitude_datasets.png")
     println("Plot saved as figures/velocity_magnitude_datasets.png")
 end
 
 function create_training_sets(c_train, v_train)
-    # Get dimensions
     x, y, num_components, num_time_steps, num_trajectories = size(c_train)
-
-    # Initialize arrays for GPU compatibility
     initial_sample = CUDA.zeros(Float32, x, y, num_components, num_time_steps - 1, num_trajectories)
     target_sample = CUDA.zeros(Float32, x, y, num_components, num_time_steps - 1, num_trajectories)
-    target_label = CUDA.zeros(Float32, x, y, num_components, num_time_steps - 1, num_trajectories)
+    target_label_closure = CUDA.zeros(Float32, x, y, num_components, num_time_steps - 1, num_trajectories)
+    target_label_state = CUDA.zeros(Float32, x, y, num_components, num_time_steps-1, num_trajectories)
 
     for i in 1:num_time_steps - 1
-        # Assign slices directly into the preallocated arrays
         initial_sample[:, :, :, i, :] .= c_train[:, :, :, i, :]
         target_sample[:, :, :, i, :] .= c_train[:, :, :, i + 1, :]
-        target_label[:, :, :, i, :] .= v_train[:, :, :, i + 1, :]
+        target_label_closure[:, :, :, i, :] .= c_train[:, :, :, i, :]
+        target_label_state[:, :, :, i, :] .= v_train[:, :, :, i, :]
     end
 
-    return initial_sample, target_sample, target_label
+    return initial_sample, target_sample, target_label_closure, target_label_state
 end
