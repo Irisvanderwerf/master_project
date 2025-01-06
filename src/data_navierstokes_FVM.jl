@@ -132,17 +132,12 @@ end
 
 function load_large_bson(filepath)
     metadata_filepath = filepath * "_metadata.bson"
-    alt_metadata_filepath = filepath * ".bson_metadata.bson"
 
     if isfile(metadata_filepath)
         metadata = BSON.load(metadata_filepath)
-    elseif isfile(alt_metadata_filepath)
-        metadata = BSON.load(alt_metadata_filepath)
     else
         error("Metadata file not found for $(filepath)")
     end
-
-    dims = metadata[:dims]
 
     parts = []
     part_files = sort(filter(x -> occursin("$(basename(filepath))_part_", x), readdir(dirname(filepath))))
@@ -170,8 +165,8 @@ function generate_or_load_data(N_dns, LES_resolutions, Re, output_dir, generate_
                 filepath_v = joinpath(resolution_dir, "v_cond_$cond")
                 filepath_c = joinpath(resolution_dir, "c_cond_$cond")
         
-                part_files_v = filter(x -> startswith(x, "v_cond_$(cond).bson_part_"), readdir(resolution_dir))
-                part_files_c = filter(x -> startswith(x, "c_cond_$(cond).bson_part_"), readdir(resolution_dir))
+                part_files_v = filter(x -> startswith(x, "v_cond_$(cond)_part_"), readdir(resolution_dir))
+                part_files_c = filter(x -> startswith(x, "c_cond_$(cond)_part_"), readdir(resolution_dir))
         
                 if isempty(part_files_v) || isempty(part_files_c)
                     error("Missing trajectory files for LES resolution $N_les condition $cond in $resolution_dir")
@@ -278,105 +273,109 @@ function generate_or_load_data(N_dns, LES_resolutions, Re, output_dir, generate_
     return data_v, data_c
 end
 
-function generate_or_load_standardized_data(
+function generate_or_load_stand_data(
+    raw_data_v,
+    raw_data_c,
     standardized_dir::String,
-    raw_data_v::Dict{Int, Array},
-    raw_data_c::Dict{Int, Array},
     generate_new_data::Bool
 )
-    # Ensure the standardized directory exists
     isdir(standardized_dir) || mkdir(standardized_dir)
-
     standardized_data_v = Dict{Int, Array}()
     standardized_data_c = Dict{Int, Array}()
     stats = Dict{Int, Dict{Symbol, Array}}()
-
     for (resolution, v_data) in raw_data_v
         println("Processing LES resolution $resolution...")
-
         resolution_dir = joinpath(standardized_dir, "LES_$resolution")
         isdir(resolution_dir) || mkdir(resolution_dir)
-
-        # Paths for saving statistics
         state_means_path = joinpath(resolution_dir, "state_means.bson")
         state_std_path = joinpath(resolution_dir, "state_std.bson")
         closure_means_path = joinpath(resolution_dir, "closure_means.bson")
         closure_std_path = joinpath(resolution_dir, "closure_std.bson")
-
         num_trajectories = size(v_data, 5)
-
-        # Check if statistics exist
         if !generate_new_data && isfile(state_means_path) && isfile(state_std_path) &&
            isfile(closure_means_path) && isfile(closure_std_path)
             println("Loading existing statistics for resolution $resolution...")
 
-            # Load statistics
             stats[resolution] = Dict(
                 :state_means => deserialize(state_means_path),
                 :state_std => deserialize(state_std_path),
                 :closure_means => deserialize(closure_means_path),
                 :closure_std => deserialize(closure_std_path)
             )
+
+            v_all = []
+            c_all = []
+
+            for cond in 1:num_trajectories
+                filepath_v = joinpath(resolution_dir, "v_cond_$cond")
+                filepath_c = joinpath(resolution_dir, "c_cond_$cond")
+
+                part_files_v = filter(x -> startswith(x, "v_cond_$(cond)_part_"), readdir(resolution_dir))
+                part_files_c = filter(x -> startswith(x, "c_cond_$(cond)_part_"), readdir(resolution_dir))
+
+                if isempty(part_files_v) || isempty(part_files_c)
+                    error("Missing trajectory files for LES resolution $N_les condition $cond in $resolution_dir")
+                end
+
+                println("Loading standardized trajectory $cond for resolution $resolution from parts...")
+                v = load_large_bson(filepath_v)
+                c = load_large_bson(filepath_c)
+                push!(v_all, v)
+                push!(c_all, c)
+            end
+
+            standardized_data_v[resolution] = cat(v_all..., dims=5)
+            standardized_data_c[resolution] = cat(c_all..., dims=5)
         else
             println("Standardizing data for resolution $resolution...")
-
-            # Compute mean and std for state and closure
             state_means, state_std = compute_mean_std(v_data)
             closure_means, closure_std = compute_mean_std(raw_data_c[resolution])
 
-            # Save statistics
             println("Saving statistics for resolution $resolution...")
             serialize(state_means_path, state_means)
             serialize(state_std_path, state_std)
             serialize(closure_means_path, closure_means)
             serialize(closure_std_path, closure_std)
 
-            # Store statistics in memory
             stats[resolution] = Dict(
                 :state_means => state_means,
                 :state_std => state_std,
                 :closure_means => closure_means,
                 :closure_std => closure_std
             )
-        end
 
-        # Storage for trajectories
-        v_all = []
-        c_all = []
+            v_all = []
+            c_all = []
 
-        # Process individual trajectories
-        println("Processing individual trajectories for resolution $resolution...")
-        for cond in 1:num_trajectories
-            filepath_v = joinpath(resolution_dir, "v_cond_$cond.bson")
-            filepath_c = joinpath(resolution_dir, "c_cond_$cond.bson")
-
-            if !generate_new_data && isfile(filepath_v) && isfile(filepath_c)
-                println("Loading existing standardized trajectory $cond for resolution $resolution...")
-                push!(v_all, BSON.load(filepath_v)[:data])
-                push!(c_all, BSON.load(filepath_c)[:data])
-            else
+            for cond in 1:num_trajectories
                 println("Standardizing trajectory $cond for resolution $resolution...")
 
-                # Extract one trajectory (dim 5)
                 v_traj = v_data[:, :, :, :, cond]
                 c_traj = raw_data_c[resolution][:, :, :, :, cond]
 
-                # Standardize the trajectory
-                v_standardized = standardize_training_set_per_channel(v_traj, stats[resolution][:state_means], stats[resolution][:state_std])
-                c_standardized = standardize_training_set_per_channel(c_traj, stats[resolution][:closure_means], stats[resolution][:closure_std])
+                v_standardized = standardize_training_set_per_channel(
+                    v_traj,
+                    state_means,
+                    state_std
+                )
+                c_standardized = standardize_training_set_per_channel(
+                    c_traj,
+                    closure_means,
+                    closure_std
+                )
 
-                # Save the standardized trajectory
-                BSON.@save(filepath_v, data=v_standardized)
-                BSON.@save(filepath_c, data=c_standardized)
+                filepath_v = joinpath(resolution_dir, "v_cond_$cond")
+                filepath_c = joinpath(resolution_dir, "c_cond_$cond")
+
+                save_large_bson(filepath_v, v_standardized)
+                save_large_bson(filepath_c, c_standardized)
 
                 push!(v_all, v_standardized)
                 push!(c_all, c_standardized)
             end
+            standardized_data_v[resolution] = cat(v_all..., dims=5)
+            standardized_data_c[resolution] = cat(c_all..., dims=5)
         end
-
-        # Concatenate all trajectories along the fifth dimension
-        standardized_data_v[resolution] = cat(v_all..., dims=5)
-        standardized_data_c[resolution] = cat(c_all..., dims=5)
     end
 
     return standardized_data_v, standardized_data_c, stats

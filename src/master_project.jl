@@ -19,7 +19,7 @@ export inverse_standardize_set_per_channel
 export save_large_bson
 export load_large_bson
 export generate_or_load_data
-export generate_or_load_standardized_data
+export generate_or_load_stand_data
 export compute_velocity_magnitude
 export plot_velocity_magnitudes
 export create_training_sets

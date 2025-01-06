@@ -22,8 +22,9 @@ if dev==gpu_device()
     CUDA.allowscalar(false)
 end
 
-####### DATA GENERATION: Training + Test set ####### 
+####### DATA GENERATION ####### 
 output_dir = "datasets/trajectories";
+standardized_dir = "datasets/standardized_trajectories";
 generate_new_data = false;
 generate_new_stand_data = true;
 Re = 1.0f4;
@@ -34,14 +35,15 @@ dt = 1.0f-4;
 nt = 100000; 
 
 data_v, data_c = generate_or_load_data(N_dns, N_les, Re, output_dir, generate_new_data, nt, dt, num_trajectories; dev);
-# stand_data_v, stand_data_c = 
+# stand_data_v, stand_data_c, stats = generate_or_load_stand_data(data_v, data_c, standardized_dir, generate_new_stand_data);
+
+# plot_velocity_magnitudes(data_v, data_c, stand_data_v, stand_data_c, 50, 10, 64)
+
+# create the train - test - validation sets. 
+
+####### TRAINING ####### 
 
 
-
-# generate_new_data = false;
-# generate_new_stand_data = false;
-
-# v_train, c_train, v_test, c_test = generate_or_load_data(N_dns, N_les, Re, v_train_path, c_train_path, v_test_path, c_test_path, generate_new_data, nt, dt, num_initial_conditions, num_train_conditions; dev);
 # v_train_standardized, c_train_standardized, v_test_standardized, c_test_standardized, state_means, state_std, closure_means, closure_std = generate_or_load_standardized_data(v_train_standardized_path, c_train_standardized_path, v_test_standardized_path, c_test_standardized_path, generate_new_stand_data, v_train, c_train, v_test, c_test, state_means_path, state_std_path, closure_means_path, closure_std_path);0
 
 # ####### INITIALIZE/LOAD NETWORK ####### - two seperate models for the denoiser and drift term in complexity. 
