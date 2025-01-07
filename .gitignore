@@ -25,3 +25,4 @@ mnist_data/
 *.gif
 *.bson
 
+trained_models/final_model.bson

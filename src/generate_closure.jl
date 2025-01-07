@@ -6,7 +6,6 @@ using FFTW
 using KernelAbstractions
 using Printf
 
-# implement Heuns method. 
 
 function euler_maruyama(x, b_F, Δt, sigma, dev)
     wiener = randn(size(x)).* sqrt(Δt) |> dev
@@ -14,7 +13,7 @@ function euler_maruyama(x, b_F, Δt, sigma, dev)
     return x .+ b_F * Δt .+ noise_term |> dev
 end
 
-function generate_closure(velocity_cnn, ps_drift, _st_drift, target_label_closure_test, target_label_state_test, initial_test, num_steps, dev)
+function generate_closure(velocity_cnn, ps_drift, _st_drift, target_label_closure_test, target_label_state_test, initial_test, num_steps, dev; method=:euler_maruyama)
     cond_closure = Float32.(target_label_closure_test) |> dev
     cond_state = Float32.(target_label_state_test) |> dev
     images = Float32.(initial_test) |> dev
@@ -24,11 +23,22 @@ function generate_closure(velocity_cnn, ps_drift, _st_drift, target_label_closur
     dt = t_range[2] - t_range[1]
     for i in 1:num_steps-1
         t = t_range[i]
-        t_sample = Float32.(fill(t, (1,1,1, num_test_samples))) |> dev
+        t_sample_euler = Float32.(fill(t, (1,1,1, num_test_samples))) |> dev
 
-        drift, _st_drift = Lux.apply(velocity_cnn, (images, t_sample, cond_closure, cond_state), ps_drift, _st_drift) |> dev
-        sigma_value  = sigma(t_sample, 0.1) |> dev
-        images = euler_maruyama(images, drift, dt, sigma_value, dev) |> dev
+        drift_euler, _st_drift = Lux.apply(velocity_cnn, (images, t_sample_euler, cond_closure, cond_state), ps_drift, _st_drift) |> dev
+        sigma_value_euler  = sigma(t_sample, 0.1) |> dev
+        images_euler = euler_maruyama(images, drift_euler, dt, sigma_value_euler, dev) |> dev
+
+        if method==:heun
+            t_sample_heun = Float32.(fill((t .+ dt), (1,1,1, num_test_samples))) |> dev;
+            sigma_heun_next = sigma(t_sample_heun, 0.1) |> dev
+            drift_heun, _st_drift = Lux.apply(velocity_cnn, (images, t_sample_heun, cond_closure, cond_state), ps_drift, _st_drift) |> dev
+            drift_heun = (1/2) .* (drift_heun .+ drift_euler) |> dev;
+            sigma_heun = (1/2) .* (sigma_value_euler .+ sigma_heun_next) |> dev;
+            images = euler_maruyama(images, drift_heun, dt, sigma_heun, dev) |> dev
+        else 
+            images = images_euler |> dev;
+        end
     end
     return images
 end

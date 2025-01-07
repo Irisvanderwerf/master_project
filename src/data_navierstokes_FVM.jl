@@ -434,17 +434,13 @@ function split_trajectories(
     train_ratio::Float64 = 0.75,
     val_ratio::Float64 = 0.125
 )
-    # Ensure reproducibility
     Random.seed!(42)
 
-    # Total number of trajectories
     num_trajectories = size(initial_sample, 5)
     trajectories = collect(1:num_trajectories)
 
-    # Shuffle the trajectory indices
     shuffle!(trajectories)
 
-    # Calculate split indices
     num_train = Int(floor(num_trajectories * train_ratio))
     num_val = Int(floor(num_trajectories * val_ratio))
 
@@ -456,13 +452,10 @@ function split_trajectories(
     println("Validation indices: ", val_idx)
     println("Test indices: ", test_idx)
 
-    # Helper function to split arrays by trajectory index
     function split_by_idx(data::CuArray, idx::Vector{Int})
-        # Use CUDA view to avoid unnecessary data transfer
         return @view data[:, :, :, :, idx]
     end
 
-    # Split data (keeping them on the GPU)
     data_train = (
         initial = split_by_idx(initial_sample, train_idx),
         target = split_by_idx(target_sample, train_idx),

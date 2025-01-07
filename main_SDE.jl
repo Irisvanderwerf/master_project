@@ -38,26 +38,43 @@ data_v, data_c = generate_or_load_data(N_dns, N_les, Re, output_dir, generate_ne
 stand_data_v, stand_data_c, stats = generate_or_load_stand_data(data_v, data_c, standardized_dir, generate_new_stand_data) |> dev;
 
 initial_sample, target_sample, target_label_closure, target_label_state = create_training_sets(stand_data_c, stand_data_v, N_les);
-splits = split_trajectories(initial_sample, target_sample, target_label_closure, target_label_state); # initial - target - closure - state 
+splits = split_trajectories(initial_sample, target_sample, target_label_closure, target_label_state); 
 
 train_data = splits.train
 val_data = splits.val
 test_data = splits.test
 
 ####### TRAINING ####### 
-# velocity_cnn = build_full_unet(16,[32,64,128,256],128; dev)
-# model_name = "closure_to_closure";
-# load_path = nothing;
-# ps_drift, st_drift, opt_drift = initialize_or_load_model(model_name, velocity_cnn, load_path; dev);
+velocity_cnn = build_full_unet(16,[32,64,128,256],128; dev)
+model_name = "closure_to_closure";
+load_path = nothing;
+ps_drift, st_drift, opt_drift = initialize_or_load_model(model_name, velocity_cnn, load_path; dev);
 
-# batch_size = 32;
-# num_epochs = 5;
+num_training_time_steps = 500;
+eval_frequency = 5; 
+val_subset_size = 100; 
+batch_size = 4;
+num_epochs = 100;
+train!(train_data, val_data, batch_size, num_epochs, ps_drift, st_drift, opt_drift, velocity_cnn, "trained_models", model_name, num_training_time_steps, eval_frequency, val_subset_size; dev);
+
+####### INFERENCE #######
 
 
 
 
-# train!(initial, target, target_label, batch_size, num_epochs, ps_drift, st_drift, opt_drift, ps_denoiser, st_denoiser, opt_denoiser, velocity_cnn, target_test, initial_test, target_label_test, "trained_models", model_name; is_gaussian, method=:SDE, dev)
-# println("The network is trained")
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 # # ###### EVALUATION ######
 # # load_path = "trained_models/$model_name.bson"

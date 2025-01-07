@@ -50,6 +50,7 @@ export train!
 export get_minibatch_NS
 export loss_fn
 export save_model
+export save_training_state
 
 export generate_closure
 export generate_closure_with_tunable_diffusion
