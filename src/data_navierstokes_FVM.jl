@@ -162,6 +162,7 @@ function generate_or_load_data(N_dns, LES_resolutions, Re, output_dir, generate_
             c_all = []
         
             for cond in 1:num_trajectories
+                println("Loading data for trajectory $cond at LES resolution $N_les")
                 filepath_v = joinpath(resolution_dir, "v_cond_$cond")
                 filepath_c = joinpath(resolution_dir, "c_cond_$cond")
         
@@ -406,19 +407,82 @@ function plot_velocity_magnitudes(v_train, c_train, v_train_standardized, c_trai
     println("Plot saved as figures/velocity_magnitude_datasets.png")
 end
 
-function create_training_sets(c_train, v_train)
-    x, y, num_components, num_time_steps, num_trajectories = size(c_train)
+function create_training_sets(c_train, v_train, N_les)
+    x, y, num_components, num_time_steps, num_trajectories = size(c_train[N_les])
     initial_sample = CUDA.zeros(Float32, x, y, num_components, num_time_steps - 1, num_trajectories)
     target_sample = CUDA.zeros(Float32, x, y, num_components, num_time_steps - 1, num_trajectories)
     target_label_closure = CUDA.zeros(Float32, x, y, num_components, num_time_steps - 1, num_trajectories)
     target_label_state = CUDA.zeros(Float32, x, y, num_components, num_time_steps-1, num_trajectories)
 
     for i in 1:num_time_steps - 1
-        initial_sample[:, :, :, i, :] .= c_train[:, :, :, i, :]
-        target_sample[:, :, :, i, :] .= c_train[:, :, :, i + 1, :]
-        target_label_closure[:, :, :, i, :] .= c_train[:, :, :, i, :]
-        target_label_state[:, :, :, i, :] .= v_train[:, :, :, i, :]
+        initial_sample[:, :, :, i, :] .= c_train[N_les][:, :, :, i, :]
+        target_sample[:, :, :, i, :] .= c_train[N_les][:, :, :, i + 1, :]
+        target_label_closure[:, :, :, i, :] .= c_train[N_les][:, :, :, i, :]
+        target_label_state[:, :, :, i, :] .= v_train[N_les][:, :, :, i, :]
     end
 
     return initial_sample, target_sample, target_label_closure, target_label_state
+end
+
+using Random
+
+function split_trajectories(
+    initial_sample::CuArray,
+    target_sample::CuArray,
+    target_label_closure::CuArray,
+    target_label_state::CuArray;
+    train_ratio::Float64 = 0.75,
+    val_ratio::Float64 = 0.125
+)
+    # Ensure reproducibility
+    Random.seed!(42)
+
+    # Total number of trajectories
+    num_trajectories = size(initial_sample, 5)
+    trajectories = collect(1:num_trajectories)
+
+    # Shuffle the trajectory indices
+    shuffle!(trajectories)
+
+    # Calculate split indices
+    num_train = Int(floor(num_trajectories * train_ratio))
+    num_val = Int(floor(num_trajectories * val_ratio))
+
+    train_idx = trajectories[1:num_train]
+    val_idx = trajectories[num_train+1:num_train+num_val]
+    test_idx = trajectories[num_train+num_val+1:end]
+
+    println("Training indices: ", train_idx)
+    println("Validation indices: ", val_idx)
+    println("Test indices: ", test_idx)
+
+    # Helper function to split arrays by trajectory index
+    function split_by_idx(data::CuArray, idx::Vector{Int})
+        # Use CUDA view to avoid unnecessary data transfer
+        return @view data[:, :, :, :, idx]
+    end
+
+    # Split data (keeping them on the GPU)
+    data_train = (
+        initial = split_by_idx(initial_sample, train_idx),
+        target = split_by_idx(target_sample, train_idx),
+        closure = split_by_idx(target_label_closure, train_idx),
+        state = split_by_idx(target_label_state, train_idx)
+    )
+    
+    data_val = (
+        initial = split_by_idx(initial_sample, val_idx),
+        target = split_by_idx(target_sample, val_idx),
+        closure = split_by_idx(target_label_closure, val_idx),
+        state = split_by_idx(target_label_state, val_idx)
+    )
+    
+    data_test = (
+        initial = split_by_idx(initial_sample, test_idx),
+        target = split_by_idx(target_sample, test_idx),
+        closure = split_by_idx(target_label_closure, test_idx),
+        state = split_by_idx(target_label_state, test_idx)
+    )
+
+    return (train=data_train, val=data_val, test=data_test)
 end

@@ -26,41 +26,36 @@ end
 output_dir = "datasets/trajectories";
 standardized_dir = "datasets/standardized_trajectories";
 generate_new_data = false;
-generate_new_stand_data = true;
+generate_new_stand_data = false;
 Re = 1.0f4;
 num_trajectories = 32;
-N_les = [64, 128]; 
+N_les = 64; 
 N_dns = 2048; 
 dt = 1.0f-4;
 nt = 100000; 
 
 data_v, data_c = generate_or_load_data(N_dns, N_les, Re, output_dir, generate_new_data, nt, dt, num_trajectories; dev);
-# stand_data_v, stand_data_c, stats = generate_or_load_stand_data(data_v, data_c, standardized_dir, generate_new_stand_data);
+stand_data_v, stand_data_c, stats = generate_or_load_stand_data(data_v, data_c, standardized_dir, generate_new_stand_data) |> dev;
 
-# plot_velocity_magnitudes(data_v, data_c, stand_data_v, stand_data_c, 50, 10, 64)
+initial_sample, target_sample, target_label_closure, target_label_state = create_training_sets(stand_data_c, stand_data_v, N_les);
+splits = split_trajectories(initial_sample, target_sample, target_label_closure, target_label_state); # initial - target - closure - state 
 
-# create the train - test - validation sets. 
+train_data = splits.train
+val_data = splits.val
+test_data = splits.test
 
 ####### TRAINING ####### 
-
-
-# v_train_standardized, c_train_standardized, v_test_standardized, c_test_standardized, state_means, state_std, closure_means, closure_std = generate_or_load_standardized_data(v_train_standardized_path, c_train_standardized_path, v_test_standardized_path, c_test_standardized_path, generate_new_stand_data, v_train, c_train, v_test, c_test, state_means_path, state_std_path, closure_means_path, closure_std_path);0
-
-# ####### INITIALIZE/LOAD NETWORK ####### - two seperate models for the denoiser and drift term in complexity. 
 # velocity_cnn = build_full_unet(16,[32,64,128,256],128; dev)
-# model_name = "SDE_closure_time_stepping_cond_on_current_state";
-# load_path = nothing; 
-# is_gaussian = false; 
+# model_name = "closure_to_closure";
+# load_path = nothing;
+# ps_drift, st_drift, opt_drift = initialize_or_load_model(model_name, velocity_cnn, load_path; dev);
 
-# ps_drift, st_drift, opt_drift, ps_denoiser, st_denoiser, opt_denoiser = initialize_or_load_model(model_name, velocity_cnn, load_path; dev, method=:SDE, is_gaussian)
-
-# ###### MAKE TRAINING SETS READY ######
-# initial, target, target_label = create_training_sets(c_train_standardized, v_train_standardized); 
-# initial_test, target_test, target_label_test = create_training_sets(c_test_standardized, v_test_standardized);
-
-# ####### TRAINING #######
 # batch_size = 32;
-# num_epochs = 10;
+# num_epochs = 5;
+
+
+
+
 # train!(initial, target, target_label, batch_size, num_epochs, ps_drift, st_drift, opt_drift, ps_denoiser, st_denoiser, opt_denoiser, velocity_cnn, target_test, initial_test, target_label_test, "trained_models", model_name; is_gaussian, method=:SDE, dev)
 # println("The network is trained")
 

@@ -23,6 +23,7 @@ export generate_or_load_stand_data
 export compute_velocity_magnitude
 export plot_velocity_magnitudes
 export create_training_sets
+export split_trajectories
 
 export stochastic_interpolant
 export time_derivative_stochastic_interpolant
