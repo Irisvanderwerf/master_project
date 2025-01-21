@@ -51,24 +51,33 @@ export get_minibatch_NS
 export loss_fn
 export save_model
 export save_training_state
+export load_training_state
 
 export generate_closure
-export generate_closure_with_tunable_diffusion
 export diffusion
 export score
 export euler_maruyama
-export generate_closure_test_trajectory
-export generate_closure_test_trajectory_tunable_drift
+export heuns_method
+# export step_rk4_with_closure
 
 export compute_metrics_average
 export mean_squared_error
-export mean_relative_mse
-export relative_rmse
+export relative_root_mse
+export plot_closure_prediction
+export time_steps_dependency
 
 export inference
+export batched_inference
+
+export animation_LES_model_truth
+export error_comparison_LES_model
+export snapshot_comparison
 export compute_energy_spectra
-export inference_tunable_diffusion
-export inference_mean
+export compute_total_energy
+export compute_enstrophy_spectra
+export compute_total_enstrophy
+export plot_total_energy_over_time
+export plot_total_enstrophy_over_time
 
 end
 

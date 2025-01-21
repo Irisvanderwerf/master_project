@@ -95,12 +95,12 @@ function ConvNextBlock_down(;
     @compact(
         ds_conv = ConvPeriodicLayer((7,7), in_channels, in_channels; pad=(3,3)),
         pars_mlp = Lux.Dense(embedding_dim => in_channels),
-        dropout1 = Dropout(0.3),
+        dropout1 = Dropout(0.1),
         conv_net = Chain(
             Lux.InstanceNorm(in_channels),
             ConvPeriodicLayer((3, 3), in_channels, (in_channels * multiplier); pad=(1,1)),
             NNlib.gelu,
-            Dropout(0.3),
+            Dropout(0.1),
             InstanceNorm(in_channels * multiplier),
             ConvPeriodicLayer((3, 3), (in_channels * multiplier), out_channels; pad=(1,1))
         ),
@@ -161,13 +161,13 @@ function BottomLayerWithAttention(;
     @compact(
         ds_conv = ConvPeriodicLayer((7, 7), in_channels, in_channels; pad=(3,3)),
         pars_mlp = Lux.Dense(embedding_dim => in_channels),
-        dropout1 = Dropout(0.3),
+        dropout1 = Dropout(0.1),
         attention = SelfAttentionBlock(in_channels=in_channels), 
         conv_net = Chain(
             Lux.InstanceNorm(in_channels),
             ConvPeriodicLayer((3, 3), in_channels, (in_channels * multiplier); pad=(1,1)),
             NNlib.gelu,
-            Dropout(0.3),
+            Dropout(0.1),
             InstanceNorm(in_channels * multiplier),
             ConvPeriodicLayer((3, 3), (in_channels * multiplier), out_channels; pad=(1,1))
         ),

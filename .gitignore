@@ -24,5 +24,4 @@ mnist_data/
 *.png
 *.gif
 *.bson
-
-trained_models/final_model.bson
+*.mp4

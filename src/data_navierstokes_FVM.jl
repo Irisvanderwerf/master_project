@@ -78,17 +78,14 @@ end
 
 function standardize_training_set_per_channel(training_set, means, stds; one_trajectory=false)
     standardized_set = similar(training_set)
-    if !one_trajectory 
+    if !one_trajectory
         for c in 1:2
             standardized_set[:,:,c,:,:] .= (training_set[:,:,c,:,:] .- means[c]) ./ stds[c]
         end
-        return standardized_set
     else
-        for c in 1:2
-            standardized_set[:,:,c,:] .= (training_set[:,:,c,:] .- means[c]) ./ stds[c]
-        end
-        return standardized_set
+        standardized_set .= (training_set .- reshape(means, 1, 1, :, 1)) ./ reshape(stds, 1, 1, :, 1)
     end
+    return standardized_set
 end
 
 function inverse_standardize_set_per_channel(training_set, means, stds; one_trajectory=false)
@@ -97,14 +94,12 @@ function inverse_standardize_set_per_channel(training_set, means, stds; one_traj
         for c in 1:2
             inverse_standardized_set[:,:,c,:,:] .= (training_set[:,:,c,:,:] .* stds[c]) .+ means[c]
         end
-        return inverse_standardized_set
     else
-        for c in 1:2
-            inverse_standardized_set[:,:,c,:] .= (training_set[:,:,c,:] .* stds[c]) .+ means[c]
-        end
-        return inverse_standardized_set
+        inverse_standardized_set .= (training_set .* reshape(stds, 1, 1, :, 1)) .+ reshape(means, 1, 1, :, 1)
     end
+    return inverse_standardized_set
 end
+
 
 function save_large_bson(filepath, data)
     Base.@eval BSON begin

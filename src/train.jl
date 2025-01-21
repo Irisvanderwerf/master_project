@@ -7,6 +7,7 @@ using LuxCUDA
 using Plots
 using LinearAlgebra
 using Random
+using StatsBase
 
 function initialize_or_load_model(model_name::String, network::Any, load_path::Union{String, Nothing} = nothing; dev)
     if isnothing(load_path)
@@ -67,7 +68,7 @@ function save_model(file_path, ps_drift, st_drift, opt_drift; dev)
 end
 
 
-function train!(train_data, val_data, batch_size, num_epochs, ps_drift, st_drift, opt_drift, velocity_cnn, save_path, model_name, num_samples, eval_frequency, val_subset_size; dev=gpu.device())
+function train!(train_data, val_data, batch_size, num_epochs, ps_drift, st_drift, opt_drift, velocity_cnn, save_path, model_name, num_samples, load_path; dev=gpu.device())
     initial_train_images, train_images, train_labels_closure, train_labels_state = train_data.initial, train_data.target, train_data.closure, train_data.state;
     initial_test, target_test, target_label_closure_test, target_label_state_test = val_data.initial, val_data.target, val_data.closure, val_data.state;
 
@@ -95,27 +96,30 @@ function train!(train_data, val_data, batch_size, num_epochs, ps_drift, st_drift
     target_label_closure_test = reshape(target_label_closure_test, size(target_label_closure_test, 1), size(target_label_closure_test, 2), size(target_label_closure_test, 3), size(target_label_closure_test, 4) * size(target_label_closure_test, 5))
     target_label_state_test = reshape(target_label_state_test, size(target_label_state_test, 1), size(target_label_state_test, 2), size(target_label_state_test, 3), size(target_label_state_test, 4) * size(target_label_state_test, 5))
     initial_test = reshape(initial_test, size(initial_test, 1), size(initial_test, 2), size(initial_test, 3), size(initial_test, 4) * size(initial_test, 5))
-
-    total_test_samples = size(initial_test, 4)
-    rng = MersenneTwister(42) 
-    subset_indices = sample(rng, 1:total_test_samples, val_subset_size; replace=false)
     
     num_samples = size(train_images, 4);
     num_batches =  ceil(Int, num_samples / batch_size);
 
     init_learning_rate = 1.0e-4
     min_learning_rate = 1.0e-6
-  
-    drift_losses = Float32[]
-    test_drift_losses = Float32[]
-    validation_rmse = Float32[]
+    
+    if load_path !== nothing
+        state = load_training_state(load_path, model_name)
+        drift_losses = state[:drift_losses]
+        test_drift_losses = state[:test_drift_losses]
+        start_epoch = state[:num_finished_epochs] + 1
+    else
+        drift_losses = Float32[]
+        test_drift_losses = Float32[]
+        start_epoch = 1
+    end
 
     best_test_loss_drift = Inf;
     patience = 25;
     counter = 0;
     stop_training = false;
 
-    for epoch in 1:num_epochs
+    for epoch in start_epoch:num_epochs
         if !stop_training 
             println("Epoch $epoch")
             shuffled_indices = randperm(size(train_images, 4))
@@ -182,54 +186,58 @@ function train!(train_data, val_data, batch_size, num_epochs, ps_drift, st_drift
             push!(test_drift_losses, test_drift_loss)
             println("Validation loss for drift term: $test_drift_loss")
 
-            if epoch % eval_frequency == 0
-                y_pred = generate_closure(velocity_cnn, ps_drift, _st_drift, target_label_closure_test[:,:,:,subset_indices], target_label_state_test[:,:,:,subset_indices], initial_test[:,:,:,subset_indices], num_val_steps, dev; method=:heun)
-                rmse = mean(mean_relative_mse(target_label_closure_test[:,:,:, (subset_indices .+ 1)], y_pred; dev))
-                push!(validation_rmse, rmse)
-                println("Validation RMSE (Epoch $epoch): ", rmse)
-            end
-
-            save_training_state(save_path, model_name, drift_losses, test_drift_losses, validation_rmse, num_finished_epochs)
-
             if test_drift_loss < best_test_loss_drift
                 best_test_loss_drift = test_drift_loss 
                 counter = 0  
-                save_model("$save_path/$model_name.bson", ps_drift, st_drift, opt_drift; dev)
                 println(" Saved intermediate model parameters ")
             else
                 counter += 1
                 if counter >= patience
                     println("Early stopping triggered")
                     stop_training = true;
-                    num_finished_epochs = epoch;
+                    num_finished_epochs = start_epoch + (epoch-1);
                 end
             end
+            save_model("$save_path/$model_name.bson", ps_drift, st_drift, opt_drift; dev)
+            num_finished_epochs = length(drift_losses)
+            save_training_state(save_path, model_name, drift_losses, test_drift_losses,  num_finished_epochs) 
+            println(" Saved intermediate model parameters ")
         end
     end
-    if !stop_training
-        num_finished_epochs = num_epochs;
-    end
 
-    p1 = plot(1:num_finished_epochs, drift_losses, label="Training Loss", xlabel="Epoch", ylabel="Loss", title="Training and Validation Loss", yscale=:log10)
-    plot!(p1, 1:num_finished_epochs, test_drift_losses, label="Validation Loss")
-    p2 = plot(1:eval_frequency:num_finished_epochs, validation_rmse, label= " Validation RMSE", xlabel="Epoch", ylabel="RMSE", title="Validation Accuracy (RMSE)")
-    final_plot = plot(p1, p2, layout=(2,1), size=(800,800))
+    p1 = plot(1:length(drift_losses), drift_losses, label="Training Loss", xlabel="Epoch", ylabel="Loss", title="Training and Validation Loss", yscale=:log10)
+    plot!(p1, 1:length(test_drift_losses), test_drift_losses, label="Validation Loss")
 
-    savefig(final_plot, "figures/final_loss_plot_$(model_name).png")
-    println("Final loss and accuracy plot saved at $(save_path)/final_loss_plot_$(model_name).png")
-
+    savefig(p1, "figures/final_loss_plot_$(model_name).png")
+    println("Final loss plot saved at $(save_path)/final_loss_plot_$(model_name).png")
     println("Training completed")
     return ps_drift, st_drift, opt_drift
 end
 
-function save_training_state(save_path, model_name, drift_losses, test_drift_losses, validation_rmse, num_finished_epochs)
+function save_training_state(save_path, model_name, drift_losses, test_drift_losses, num_finished_epochs)
     training_state = Dict(
         :drift_losses => drift_losses,
         :test_drift_losses => test_drift_losses,
-        :validation_rmse => validation_rmse,
         :num_finished_epochs => num_finished_epochs
     )
 
     BSON.@save "$(save_path)/$(model_name)_training_state.bson" training_state
     println("Training state saved at $(save_path)/$(model_name)_training_state.bson")
+end
+
+function load_training_state(save_path, model_name)
+    filepath = "$(save_path)/$(model_name)_training_state.bson"
+    
+    if isfile(filepath)
+        training_state = BSON.load(filepath)[:training_state]
+        println("Training state loaded from $(filepath)")
+        return training_state
+    else
+        println("No previous training state found. Starting fresh.")
+        return Dict(
+            :drift_losses => Float32[],
+            :test_drift_losses => Float32[],
+            :num_finished_epochs => 0
+        )
+    end
 end
