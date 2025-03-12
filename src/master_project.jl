@@ -7,6 +7,7 @@ include("train.jl")
 include("generate_closure.jl")
 include("evaluation.jl")
 include("inference.jl")
+include("u-net_conv_cond_det.jl")
 
 export step_rk4
 export face_average_syver
@@ -44,9 +45,16 @@ export BottomLayerWithAttention
 export UNet
 export build_full_unet
 
+export ConvNextBlock_down_det
+export ConvNextBlock_up_det
+export UNet_det
+export build_full_unet_det
+
 export initialize_or_load_model
 export load_model
 export train!
+export train_deterministic!
+export loss_fn_det
 export get_minibatch_NS
 export loss_fn
 export save_model
@@ -58,26 +66,36 @@ export diffusion
 export score
 export euler_maruyama
 export heuns_method
-# export step_rk4_with_closure
+export step_rk4_with_closure
+export step_rk4_with_closure_deterministic
+export prior
+export compute_aposteriori_error_gpu
 
 export compute_metrics_average
 export mean_squared_error
 export relative_root_mse
 export plot_closure_prediction
 export time_steps_dependency
+export quality_deterministic_model
+export number_of_steps_SDE
+export snapshots_number_of_steps_SDE
+export plot_mean_velocity_field
+export probability_density_energy
+export probability_density_error
+export plot_boxplot_error_propagation_grid
 
 export inference
+export inference_deterministic
 export batched_inference
 
 export animation_LES_model_truth
 export error_comparison_LES_model
 export snapshot_comparison
+export plot_energy_spectrums
 export compute_energy_spectra
 export compute_total_energy
-export compute_enstrophy_spectra
-export compute_total_enstrophy
 export plot_total_energy_over_time
-export plot_total_enstrophy_over_time
+export plot_batch
 
 end
 

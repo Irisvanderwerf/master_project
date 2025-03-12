@@ -100,50 +100,6 @@ function inverse_standardize_set_per_channel(training_set, means, stds; one_traj
     return inverse_standardized_set
 end
 
-
-function save_large_bson(filepath, data)
-    Base.@eval BSON begin
-        function bson_primitive(io::IO, x::Int64)
-            write(io, x)
-        end
-    end
-    max_chunk_size = 10^7 
-    dims = size(data)
-    element_size = sizeof(eltype(data))
-    chunk_size = max(1, div(max_chunk_size, dims[1] * dims[2] * dims[3] * element_size))
-
-    metadata_filepath = filepath * "_metadata.bson" 
-    BSON.@save(metadata_filepath, dims=dims)
-
-    existing_files = filter(x -> occursin("$(basename(filepath))_part_", x), readdir(dirname(filepath)))
-    foreach(f -> rm(joinpath(dirname(filepath), f)), existing_files)
-
-    for i in 1:chunk_size:dims[4]
-        part = data[:, :, :, i:min(i + chunk_size - 1, dims[4])]
-        part_filepath = joinpath(dirname(filepath), "$(basename(filepath))_part_$i.bson")
-        BSON.@save(part_filepath, data=part)
-    end
-end
-
-function load_large_bson(filepath)
-    metadata_filepath = filepath * "_metadata.bson"
-
-    if isfile(metadata_filepath)
-        metadata = BSON.load(metadata_filepath)
-    else
-        error("Metadata file not found for $(filepath)")
-    end
-
-    parts = []
-    part_files = sort(filter(x -> occursin("$(basename(filepath))_part_", x), readdir(dirname(filepath))))
-    for file in part_files
-        part_data = BSON.load(joinpath(dirname(filepath), file))[:data]
-        push!(parts, part_data)
-    end
-
-    return cat(parts..., dims=4)
-end
-
 function generate_or_load_data(N_dns, LES_resolutions, Re, output_dir, generate_new_data, nt, dt, num_trajectories; dev)
     isdir(output_dir) || mkdir(output_dir)
     data_v = Dict{Int, Array}()
@@ -413,13 +369,11 @@ function create_training_sets(c_train, v_train, N_les)
         initial_sample[:, :, :, i, :] .= c_train[N_les][:, :, :, i, :]
         target_sample[:, :, :, i, :] .= c_train[N_les][:, :, :, i + 1, :]
         target_label_closure[:, :, :, i, :] .= c_train[N_les][:, :, :, i, :]
-        target_label_state[:, :, :, i, :] .= v_train[N_les][:, :, :, i, :]
+        target_label_state[:, :, :, i, :] .= v_train[N_les][:, :, :, i + 1, :]
     end
 
     return initial_sample, target_sample, target_label_closure, target_label_state
 end
-
-using Random
 
 function split_trajectories(
     initial_sample::CuArray,
@@ -473,4 +427,48 @@ function split_trajectories(
     )
 
     return (train=data_train, val=data_val, test=data_test)
+end
+
+function save_large_bson(filepath, data)
+    Base.@eval BSON begin
+        function bson_primitive(io::IO, x::Int64)
+            write(io, x)
+        end
+    end
+    max_chunk_size = 10^7 
+    dims = size(data)
+    element_size = sizeof(eltype(data))
+    chunk_size = min(dims[4], max(1, div(max_chunk_size, dims[1] * dims[2] * dims[3] * element_size)))
+    metadata_filepath = replace(filepath, r"_part_\d+" => "") * "_metadata.bson"
+    BSON.@save(metadata_filepath, dims=dims)
+    existing_files = filter(x -> occursin("$(replace(basename(filepath), "_metadata.bson" => ""))_part_", x), readdir(dirname(filepath)))
+    foreach(f -> rm(joinpath(dirname(filepath), f)), existing_files)
+    for i in 1:chunk_size:dims[4]
+        part = data[:, :, :, i:min(i + chunk_size - 1, dims[4])]
+        part_filepath = joinpath(dirname(filepath), "$(replace(basename(filepath), "_metadata.bson" => ""))_part_$i.bson")
+        BSON.@save(part_filepath, data=part)
+    end
+end
+
+function load_large_bson(filepath)
+    metadata_filepath = replace(filepath, r"_part_\d+" => "") * "_metadata.bson"
+    if isfile(metadata_filepath)
+        metadata = BSON.load(metadata_filepath)
+    else
+        error("Metadata file not found for $(filepath)")
+    end
+    base_name = replace(basename(filepath), r"_metadata\.bson$" => "")
+    base_name = replace(base_name, r"_part_\d+\.bson$" => "")
+    part_files = sort(filter(x -> occursin(base_name * "_part_", x), readdir(dirname(filepath))),
+                      by=x -> parse(Int, match(r"_part_(\d+)", x).captures[1]))
+
+    if isempty(part_files)
+        error("No part files found for base name $(base_name) in $(dirname(filepath))")
+    end
+    parts = []
+    for file in part_files
+        part_data = BSON.load(joinpath(dirname(filepath), file))[:data]
+        push!(parts, part_data)
+    end
+    return cat(parts..., dims=4) 
 end

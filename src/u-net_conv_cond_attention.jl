@@ -198,30 +198,25 @@ function UNet(
             ConvPeriodicLayer((4,4), hidden_channels[1], hidden_channels[1]; stride=(2,2), pad=(1,1)),
             Dropout(0.1)
         ),
-
         conv_next_down2 = ConvNextBlock_down(in_channels=hidden_channels[1], out_channels=hidden_channels[2], embedding_dim=embedding_dim),
         down2 = Chain(
             ConvPeriodicLayer((4,4), hidden_channels[2], hidden_channels[2]; stride=(2,2), pad=(1,1)),
             Dropout(0.1)
         ),
-
         conv_next_down3 = ConvNextBlock_down(in_channels=hidden_channels[2], out_channels=hidden_channels[3], embedding_dim=embedding_dim),
         down3 = Chain(
             ConvPeriodicLayer((4,4), hidden_channels[3], hidden_channels[3]; stride=(2,2), pad=(1,1)),
             Dropout(0.1)
         ),
-
         conv_next_down4 = ConvNextBlock_down(in_channels=hidden_channels[3], out_channels=hidden_channels[4], embedding_dim=embedding_dim),
         down4 = Chain(
             ConvPeriodicLayer((4,4), hidden_channels[4], hidden_channels[4]; stride=(2,2), pad=(1,1)),
             Dropout(0.1)
         ),
-
-        bottom = BottomLayerWithAttention(in_channels=hidden_channels[4], out_channels=hidden_channels[4], embedding_dim=embedding_dim), 
-
+        # bottom = BottomLayerWithAttention(in_channels=hidden_channels[4], out_channels=hidden_channels[4], embedding_dim=embedding_dim),
+        bottom = ConvNextBlock_down(in_channels=hidden_channels[4], out_channels=hidden_channels[4], embedding_dim=embedding_dim), 
         condup1 = Chain(
             ConvPeriodicLayer((3, 3), (2 * hidden_channels[3]), (2 * hidden_channels[4]); pad=(1,1), activation=NNlib.leakyrelu), 
-
             ConvPeriodicLayer((4, 4), (2 * hidden_channels[4]), (2 * hidden_channels[4]); stride=(2,2), pad=(1,1)),
         ),
         condup2 = Chain(
@@ -239,28 +234,24 @@ function UNet(
             Dropout(0.1)
         ),
         conv_next_up4 = ConvNextBlock_up(in_channels=2*hidden_channels[4], out_channels=hidden_channels[3], embedding_dim=embedding_dim, cond_channels=2*hidden_channels[4]),
-
         up3  = Chain(
             ConvTranspose((4,4), hidden_channels[3] => hidden_channels[3]; pad=1, stride=(2,2)),
             Dropout(0.1)
         ),
         conv_next_up3 = ConvNextBlock_up(in_channels=2*hidden_channels[3], out_channels=hidden_channels[2], embedding_dim=embedding_dim, cond_channels=2*hidden_channels[3]),
-
         up2 = Chain(
             ConvTranspose((4,4), hidden_channels[2] => hidden_channels[2]; pad=1, stride=(2,2)),
             Dropout(0.1)
         ),
         conv_next_up2 = ConvNextBlock_up(in_channels=2*hidden_channels[2], out_channels=hidden_channels[1], embedding_dim=embedding_dim, cond_channels=2*hidden_channels[2]),
-
         up1 = Chain(            
             ConvTranspose((4,4), hidden_channels[1] => hidden_channels[1]; pad=1, stride=(2,2)),
             Dropout(0.1)
         ),
         conv_next_up1 = ConvNextBlock_up(in_channels=2*hidden_channels[1], out_channels=hidden_channels[1], embedding_dim=embedding_dim, cond_channels=2*hidden_channels[1]),
-
         final_conv = Conv((1, 1), hidden_channels[1] => out_channels, use_bias=false),
     ) do x
-        x, pars, cond_closure, cond_state = x 
+        x, pars, cond_closure, cond_state = x
         skip_1 = conv_next_down1((x, pars))
         x = down1(skip_1)
         skip_2 = conv_next_down2((x, pars))
@@ -269,19 +260,15 @@ function UNet(
         x = down3(skip_3)
         skip_4  = conv_next_down4((x, pars))
         x = down4(skip_4)
-
         x = bottom((x, pars))
-
         cond_closure_4 = condup4(cond_closure)
         cond_closure_3 = condup3(cond_closure_4)
         cond_closure_2 = condup2(cond_closure_3) 
         cond_closure_1 = condup1(cond_closure_2) 
-
         cond_state_4 = condup4(cond_state)
         cond_state_3 = condup3(cond_state_4)
         cond_state_2 = condup2(cond_state_3) 
         cond_state_1 = condup1(cond_state_2) 
-
         x = up4(x)
         x = cat(x, skip_4, dims=3) 
         x = conv_next_up4((x, pars, cond_closure_1, cond_state_1))  
@@ -294,7 +281,6 @@ function UNet(
         x = up1(x) 
         x = cat(x, skip_1, dims=3) 
         x = conv_next_up1((x, pars, cond_closure_4, cond_state_4))
-
         @return final_conv(x)
     end
 end
