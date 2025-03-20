@@ -90,63 +90,53 @@ function quality_deterministic_model(test_data, velocity_cnn_det, ps_determinist
     end
 end
 
-function time_steps_dependency(test_data, velocity_cnn, ps_drift, _st_drift, ϵ, setup_les, psolver_les, N_les; dev, method=:euler_maruyama)
-    num_steps_values = [5, 10, 15, 20, 30, 40, 50, 60, 70, 80, 90, 100];
-    prior_losses = Dict{Int, Vector{Float64}}()
-    computation_times = Dict{Int, Vector{Float64}}()
-    for i in 1:4
-        prior_losses[i] = Float32[]
-        computation_times[i] = Float32[]
-        for num_steps in num_steps_values
-            batch_closure_values = Float32[]
-            total_time = 0.0  
-            for j in 1:100
-                initial_test_images, test_labels_closure, test_labels_state, test_target = repeat(test_data.initial[:,:,:,j,i], 1,1,1,10), repeat(test_data.closure[:,:,:,j,i],1,1,1,10), repeat(test_data.state[:,:,:,j,i],1,1,1,10), repeat(test_data.target[:,:,:,j,i],1,1,1,10) |> dev;
-                elapsed_time = @elapsed begin
-                    if method == :euler_maruyama
-                        pred_closure = generate_closure(velocity_cnn, ps_drift, _st_drift, test_labels_closure, test_labels_state, initial_test_images, num_steps, ϵ, dev; method=:euler_maruyama)
-                    elseif method == :heuns_method
-                        pred_closure = generate_closure(velocity_cnn, ps_drift, _st_drift, test_labels_closure, test_labels_state, initial_test_images, num_steps, ϵ, dev; method=:heuns_method)
-                    end
-                end
-                total_time += elapsed_time
-                pred_closure = mean(pred_closure, dims=4)[:,:,:,1]
-                pad_pred_closure = pad_circular(pred_closure, 1; dims=1:2)   
-                proj_pad_pred_closure = INS.project(pad_pred_closure, setup_les; psolver=psolver_les)
-                proj_pred_closure = proj_pad_pred_closure[2:end-1, 2:end-1, :] |> dev
-                loss = prior(test_target[:,:,:,1], proj_pred_closure; dev) |> dev
-                push!(batch_closure_values, loss)
+
+function time_steps_dependency(test_data, ϵ; dev, method=:euler_maruyama, error_threshold=1e-6, improvement_threshold=1e-3)
+    num_steps_values = [50, 100, 150, 200, 250, 300, 350, 400, 450, 500]
+    num_time_steps = 100
+    errors_over_time = Dict{Int, Vector{Float64}}()  
+    for num_steps in num_steps_values
+        errors_over_time[num_steps] = zeros(num_time_steps)
+        initial_test_image = test_data.initial[:,:,:,1,1] |> dev 
+        test_target = test_data.target[:,:,:,1,1] |> dev
+        current_closure = initial_test_image 
+        for t in 1:num_time_steps
+            if method == :euler_maruyama
+                pred_closure = generate_closure_SI(test_target, current_closure, num_steps, ϵ, dev; method=:euler_maruyama)
+            elseif method == :heuns_method
+                pred_closure = generate_closure_SI(test_target, current_closure, num_steps, ϵ, dev; method=:heuns_method)
             end
-            avg_time = total_time / 100
-            push!(computation_times[i], avg_time)
-            prior_loss = mean(batch_closure_values)
-            push!(prior_losses[i], prior_loss)
-            println("Trajectory $i, num_steps $num_steps: A-Priori Loss = $prior_loss, and computation time = $avg_time")
-        end
+            pred_closure = mean(pred_closure, dims=4)[:,:,:,1]
+            loss = prior(test_target[:,:,:,1], pred_closure; dev) |> dev
+            errors_over_time[num_steps][t] = loss
+            current_closure = pred_closure
+            test_target = test_data.target[:,:,:,1+t, 1] |> dev
+            if loss ≤ error_threshold
+                println("Stopping at N=$num_steps because error threshold ($error_threshold) reached at time step $t.")
+                break
+            end
+        end 
+        mean_error = mean(errors_over_time[num_steps])
+        println("N=$num_steps: Average Error over the Trajectory = $mean_error")
     end
-
-    plt = plot()
-    for i in 1:4
-        plot!(plt, num_steps_values, prior_losses[i], label="Trajectory $i", xlabel="num_steps", ylabel="A-priori error", lw=2)
+    plt = plot(
+    xlabel="Time Steps", 
+    ylabel="A-priori error", 
+    title=(method == :euler_maruyama ? "Euler-Maruyama" : "Heun"),
+    lw=2,
+    guidefontsize=14,  
+    tickfontsize=12,    
+    legendfontsize=12, 
+    titlefontsize=16   
+    )
+    for num_steps in sort(collect(keys(errors_over_time)))
+        plot!(plt, 1:num_time_steps, errors_over_time[num_steps], label="N=$num_steps")
     end
-    if method == :euler_maruyama
-        title!("Euler-Maruyama")
-    elseif method == :heuns_method
-        title!("Heun")
-    end
-    savefig(plt, "prior_error_$method.png")
-
-    plt2 = plot()
-    for i in 1:4
-        plot!(plt2, num_steps_values, computation_times[i], label="Trajectory $i", xlabel="num_steps", ylabel="Computation Time (s)", lw=2)
-    end
-    if method == :euler_maruyama
-        title!("Euler-Maruyama")
-    elseif method == :heuns_method
-        title!("Heun")
-    end
-    savefig(plt2, "computation_time_$method.png")
+    ylims!(0,0.0006)
+    savefig(plt, "error_evolution_$method.png")
+    return errors_over_time
 end
+
 
 function time_steps_dependency(test_data, velocity_cnn, ps_drift, _st_drift, ϵ, model_name; dev, method=:euler_maruyama)
     num_steps_values = [5, 10, 15, 20, 30, 40, 50, 60, 70, 80, 90, 100];

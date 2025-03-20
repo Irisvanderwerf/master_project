@@ -97,5 +97,8 @@ export compute_total_energy
 export plot_total_energy_over_time
 export plot_batch
 
+export generate_closure_SI
+export error_comparison_LES_model_closure
+
 end
 

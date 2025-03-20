@@ -56,7 +56,7 @@ function compute_total_energy(sol::CuArray)
     return dropdims(total_energy, dims=(1, 2))
 end
 
-function inference(dt_LES, num_steps, nt, test_data, N_les, velocity_cnn, ps_drift, _st_drift, Re, trajectory_to_evaluate, ϵ, dev; method=:euler_maruyama, time_step=:FE)
+function inference(dt_LES, num_steps, nt, test_data, N_les, velocity_cnn, ps_drift, _st_drift, Re, trajectory_to_evaluate, ϵ, dev; method=:euler_maruyama)
     initial_test_images, test_images, test_labels_closure, test_labels_state = test_data.initial, test_data.target, test_data.closure, test_data.state |> dev;
     initial_test_images, test_images, test_labels_closure, test_labels_state = test_data.initial[:,:,:,:,trajectory_to_evaluate], test_data.target[:,:,:,:,trajectory_to_evaluate], test_data.closure[:,:,:,:,trajectory_to_evaluate], test_data.state[:,:,:,:,trajectory_to_evaluate] |> dev; 
 
@@ -84,68 +84,97 @@ function inference(dt_LES, num_steps, nt, test_data, N_les, velocity_cnn, ps_dri
 
     global t = 0.0f0; 
     global u_les = test_labels_state[:,:,:,1]; 
-    global closure = test_images[:,:,:,1];
+    global closure = initial_test_images[:,:,:,1];
 
     u_les = reshape(u_les, N_les, N_les, 2, 1) |> dev; 
     u_model = u_les |> dev;
-    closure = reshape(closure, N_les, N_les, 2, 1) |> dev;
+    proj_closure = reshape(closure, N_les, N_les, 2, 1) |> dev;
     
-    # all_groundtruth = CUDA.zeros(N_les, N_les, 2, nt + 1) |> dev
-    # all_u_les = CUDA.zeros(N_les, N_les, 2, nt + 1) |> dev
+    all_groundtruth = CUDA.zeros(N_les, N_les, 2, nt + 1) |> dev
+    all_u_les = CUDA.zeros(N_les, N_les, 2, nt + 1) |> dev
     all_u_model = CUDA.zeros(N_les, N_les, 2, nt + 1) |> dev
-    # all_groundtruth[:,:,:,1] = u_les |> dev
-    # all_u_les[:,:,:,1] = u_les |> dev
+    closure_SI = CUDA.zeros(N_les, N_les, 2, nt + 1) |> dev
+    closure_groundtruth = CUDA.zeros(N_les, N_les, 2, nt + 1) |> dev 
+
+    all_groundtruth[:,:,:,1] = u_les |> dev
+    all_u_les[:,:,:,1] = u_les |> dev
     all_u_model[:,:,:,1] = u_les |> dev
+    closure_SI[:,:,:,1] = proj_closure |> dev
+    closure_groundtruth[:,:,:,1] = proj_closure |> dev
 
     non_stand_state = test_labels_state |> dev; 
+    non_stand_closure = initial_test_images |> dev;
+
+    total_time_iterations = 0.0;
+    total_time_closure = 0.0;
 
     for i = 2:nt+1
         global u_les, t
-        # u_les = step_rk4(u_les, dt_LES, f_les) |> dev;
-        # all_u_les[:,:,:,i] = u_les;
-        state_cond = u_model |> dev; 
-        closure_cond = closure |> dev;
-        if i==2
-            proj = f_les_non_proj(state_cond, nothing, 0.0) .+ closure_cond |> dev;
-            proj_pad = pad_circular(proj, 1; dims = 1:2) |> dev;
-            proj_pad_done = INS.project(proj_pad, setup_les; psolver=psolver_les) |> dev;
-            Add = proj_pad_done[2:end-1, 2:end-1, :] |> dev;
-            u_model = state_cond .+ (dt_LES .* Add) |> dev; 
-        else
-            if time_step == :FE
-                input_model_c_1 = reshape(closure_cond, N_les, N_les, 2, 1);
-                input_model_u_1 = reshape(state_cond, N_les, N_les, 2, 1);
+        iter_time = @elapsed begin
+            u_les = step_rk4(u_les, dt_LES, f_les) |> dev;
+            all_u_les[:,:,:,i] = u_les;
+
+            state_cond = u_model |> dev; 
+            closure_cond = proj_closure |> dev;
+
+            input_model_c_1 = reshape(closure_cond, N_les, N_les, 2, 1);
+            input_model_u_1 = reshape(state_cond, N_les, N_les, 2, 1);
+            closure_time = @elapsed begin
                 if method == :euler_maruyama
-                    closure = generate_closure(velocity_cnn, ps_drift, _st_drift, input_model_c_1, input_model_u_1, input_model_c_1, num_steps, ϵ, dev; method=:euler_maruyama) |> dev;
+                    closure_dim = generate_closure(velocity_cnn, ps_drift, _st_drift, input_model_c_1, input_model_u_1, input_model_c_1, num_steps, ϵ, dev; method=:euler_maruyama) |> dev;
                 elseif method == :heuns_method
-                    closure = generate_closure(velocity_cnn, ps_drift, _st_drift, input_model_c_1, input_model_u_1, input_model_c_1, num_steps, ϵ, dev; method=:heuns_method) |> dev;                
+                    closure_dim = generate_closure(velocity_cnn, ps_drift, _st_drift, input_model_c_1, input_model_u_1, input_model_c_1, num_steps, ϵ, dev; method=:heuns_method) |> dev;                
                 end
-                proj = f_les_non_proj(state_cond, nothing, 0.0) .+ closure |> dev;
-                proj_pad = pad_circular(proj, 1; dims = 1:2) |> dev;
-                proj_pad_done = INS.project(proj_pad, setup_les; psolver=psolver_les) |> dev;
-                Add = proj_pad_done[2:end-1, 2:end-1, :] |> dev;
-                u_model = state_cond .+ (dt_LES .* Add) |> dev; 
-            elseif time_step == :RK4
-                if method == :euler_maruyama
-                    u_model, closure = step_rk4_with_closure(state_cond, closure_cond, dt_LES, velocity_cnn, ps_drift, _st_drift, num_steps, ϵ, N_les, f_les_non_proj, setup_les, psolver_les; dev, method=:euler_maruyama)
-                elseif method == :heuns_method
-                    u_model, closure = step_rk4_with_closure(state_cond, closure_cond, dt_LES, velocity_cnn, ps_drift, _st_drift, num_steps, ϵ, N_les, f_les_non_proj, setup_les, psolver_les; dev, method=:heuns_method)                
-                end
-            end
-            pad_closure = pad_circular(closure, 1; dims = 1:2) |> dev;
-            proj_pad_closure = INS.project(pad_closure, setup_les; psolver=psolver_les) |> dev;
-            closure = proj_pad_closure[2:end-1, 2:end-1, :] |> dev;
+            end 
+            total_time_closure += closure_time
+
+            closure = closure_dim[:,:,:,1] |> dev;
+            non_proj_closure_pad = pad_circular(closure, 1; dims=1:2)   
+            proj_closure_pad = INS.project(non_proj_closure_pad, setup_les; psolver=psolver_les)
+            proj_closure = proj_closure_pad[2:end-1, 2:end-1, :] |> dev;
+            closure_half = 1/2 .* (closure_cond .+ proj_closure) |> dev;
+
+            non_proj_k1 = f_les_non_proj(state_cond, nothing, 0.0) .+ closure_cond |> dev;
+            non_proj_k1_pad = pad_circular(non_proj_k1, 1; dims=1:2) |> dev;
+            proj_k1 = INS.project(non_proj_k1_pad, setup_les; psolver=psolver_les) |> dev;
+            k1 = proj_k1[2:end-1, 2:end-1, :] |> dev;
+
+            non_proj_k2 = f_les_non_proj((state_cond .+ ((dt_LES ./ 2) .* k1)), nothing, 0.0) .+ closure_half |> dev;
+            non_proj_k2_pad = pad_circular(non_proj_k2, 1; dims=1:2) |> dev;
+            proj_k2 = INS.project(non_proj_k2_pad, setup_les; psolver=psolver_les) |> dev;
+            k2 = proj_k2[2:end-1, 2:end-1, :] |> dev;
+
+            non_proj_k3 = f_les_non_proj((state_cond .+ ((dt_LES ./ 2) .* k2)), nothing, 0.0) .+ closure_half |> dev;
+            non_proj_k3_pad = pad_circular(non_proj_k3, 1; dims=1:2) |> dev;
+            proj_k3 = INS.project(non_proj_k3_pad, setup_les; psolver=psolver_les) |> dev;
+            k3 = proj_k3[2:end-1, 2:end-1, :] |> dev;
+
+            non_proj_k4 = f_les_non_proj((state_cond .+ (dt_LES .* k3)), nothing, 0.0) .+ closure |> dev;
+            non_proj_k4_pad = pad_circular(non_proj_k4, 1; dims=1:2) |> dev;
+            proj_k4 = INS.project(non_proj_k4_pad, setup_les; psolver=psolver_les) |> dev;
+            k4 = proj_k4[2:end-1, 2:end-1, :] |> dev;
+
+            u_model = state_cond .+ (dt_LES ./ 6) .* (k1 + 2k2 + 2k3 + k4); 
         end
+        total_time_iterations += iter_time
+        
+        closure_SI[:,:,:,i] = proj_closure |> dev;
         all_u_model[:,:,:,i] = u_model |> dev;
-        # all_groundtruth[:,:,:,i] = non_stand_state[:,:,:,i] |> dev
-        t += dt_LES
+        all_groundtruth[:,:,:,i] = non_stand_state[:,:,:,i] |> dev
+        closure_groundtruth[:,:,:,i] = non_stand_closure[:,:,:,i] |> dev
+        t += dt_LES    
     end
-    return all_u_model # all_groundtruth, all_u_les, all_u_model
+    avg_time_iteration = total_time_iterations / nt
+    avg_time_closure = total_time_closure / nt
+    
+    println("Average time per iteration: ", avg_time_iteration, " seconds")
+    println("Average time computing closure: ", avg_time_closure, " seconds")
+    return all_groundtruth, all_u_les, all_u_model, closure_SI, closure_groundtruth
 end
 
 function inference_deterministic(dt_LES, nt, test_data, N_les, velocity_cnn_det, ps_deterministic, _st_deterministic, Re, trajectory_to_evaluate, dev)
-    test_images, test_labels_state = test_data.target, test_data.state |> dev;
-    test_images, test_labels_state = test_data.target[:,:,:,:,trajectory_to_evaluate], test_data.state[:,:,:,:,trajectory_to_evaluate] |> dev; 
+    test_images, test_labels_state = test_data.initial, test_data.state |> dev;
+    test_images, test_labels_state = test_data.initial[:,:,:,:,trajectory_to_evaluate], test_data.state[:,:,:,:,trajectory_to_evaluate] |> dev; 
 
     create_right_hand_side(setup) = function right_hand_side(u, p, t)
         u = pad_circular(u, 1; dims = 1:2)
@@ -164,67 +193,70 @@ function inference_deterministic(dt_LES, nt, test_data, N_les, velocity_cnn_det,
 
     u_model = reshape(u_model, N_les, N_les, 2, 1) |> dev; 
     all_u_model = CUDA.zeros(N_les, N_les, 2, nt + 1) |> dev;
+    closure_det = CUDA.zeros(N_les, N_les, 2, nt + 1) |> dev;
     all_u_model[:,:,:,1] = u_model
     for i = 2:nt+1
         global t
         state_cond = u_model |> dev;
-        u_model = step_rk4_with_closure_deterministic(state_cond, dt_LES, velocity_cnn_det, ps_deterministic, _st_deterministic, N_les, f_les, setup_les, psolver_les; dev)
+        u_model, closure = step_rk4_with_closure_deterministic(state_cond, dt_LES, velocity_cnn_det, ps_deterministic, _st_deterministic, N_les, f_les, setup_les, psolver_les; dev)
+        non_proj_closure_pad = pad_circular(closure, 1; dims=1:2)   
+        proj_closure_pad = INS.project(non_proj_closure_pad, setup_les; psolver=psolver_les)
+        proj_closure = proj_closure_pad[2:end-1, 2:end-1, :] |> dev;
+        
         all_u_model[:,:,:,i] = u_model |> dev;
+        closure_det[:,:,:,i-1] = proj_closure |> dev;
         t += dt_LES
     end
-    return all_u_model
+    input_model_u_1 = reshape(u_model, N_les, N_les, 2, 1);
+    final_closure_dim, _ = Lux.apply(velocity_cnn_det, (input_model_u_1), ps_deterministic, _st_deterministic) |> dev;
+    final_closure = final_closure_dim[:,:,:,1] |> dev;
+    non_proj_final_closure_pad = pad_circular(final_closure, 1; dims=1:2)   
+    proj_final_closure_pad = INS.project(non_proj_final_closure_pad, setup_les; psolver=psolver_les)
+    proj_final_closure = proj_final_closure_pad[2:end-1, 2:end-1, :] |> dev;
+    closure_det[:,:,:,nt+1] = proj_final_closure; 
+    return all_u_model, closure_det
 end
 
-function batched_inference(N_les, batch_size, dt_LES, num_steps, nt, test_data, velocity_cnn, velocity_cnn_det, ps_drift, _st_drift, ps_deterministic, _st_deterministic, Re, trajectory_to_evaluate, ϵ, dev; method=:euler_maruyama, time_step=:FE)
-    # all_groundtruth_batch = CUDA.zeros(Float32, N_les, N_les, 2, nt + 1, batch_size)
-    # all_u_les_batch = CUDA.zeros(Float32, N_les, N_les, 2, nt + 1, batch_size)
+function batched_inference(N_les, batch_size, dt_LES, num_steps, nt, test_data, velocity_cnn, velocity_cnn_det, ps_drift, _st_drift, ps_deterministic, _st_deterministic, Re, trajectory_to_evaluate, ϵ, dev; method=:euler_maruyama)
+    all_groundtruth_batch = CUDA.zeros(Float32, N_les, N_les, 2, nt + 1, batch_size)
+    all_u_les_batch = CUDA.zeros(Float32, N_les, N_les, 2, nt + 1, batch_size)
     all_u_model_batch = CUDA.zeros(Float32, N_les, N_les, 2, nt + 1, batch_size)
     all_u_deterministic_batch = CUDA.zeros(Float32, N_les, N_les, 2, nt+1, batch_size)
+    closure_SI_batch = CUDA.zeros(Float32, N_les, N_les, 2, nt+1, batch_size)
+    closure_groundtruth_batch = CUDA.zeros(Float32, N_les, N_les, 2, nt+1, batch_size)
+    closure_det_batch = CUDA.zeros(Float32, N_les, N_les, 2, nt+1, batch_size)
 
     total_time_si = 0.0
     total_time_det = 0.0
 
     for i in 1:batch_size
-        if time_step == :FE
-            comp_time_si = @elapsed begin
-                if method == :euler_maruyama
-                    all_u_model = inference(dt_LES, num_steps, nt, test_data, N_les, velocity_cnn, ps_drift, _st_drift, Re, trajectory_to_evaluate, ϵ, dev; method=:euler_maruyama, time_step=:FE) 
-                elseif method == :heuns_method
-                    all_u_model = inference(dt_LES, num_steps, nt, test_data, N_les, velocity_cnn, ps_drift, _st_drift, Re, trajectory_to_evaluate, ϵ, dev; method=:heuns_method, time_step=:FE)
-                end
-            end
-        elseif time_step == :RK4
-            comp_time_si = @elapsed begin
-                if method == :euler_maruyama
-                    all_u_model = inference(dt_LES, num_steps, nt, test_data, N_les, velocity_cnn, ps_drift, _st_drift, Re, trajectory_to_evaluate, ϵ, dev; method=:euler_maruyama, time_step=:RK4) 
-                elseif method == :heuns_method
-                    all_u_model = inference(dt_LES, num_steps, nt, test_data, N_les, velocity_cnn, ps_drift, _st_drift, Re, trajectory_to_evaluate, ϵ, dev; method=:heuns_method, time_step=:RK4)
-                end
-            end
+        comp_time_si = @elapsed begin
+            if method == :euler_maruyama
+                all_groundtruth, all_u_les, all_u_model, closure_SI, closure_groundtruth = inference(dt_LES, num_steps, nt, test_data, N_les, velocity_cnn, ps_drift, _st_drift, Re, trajectory_to_evaluate, ϵ, dev; method=:euler_maruyama) 
+            elseif method == :heuns_method
+                all_groundtruth, all_u_les, all_u_model, closure_SI, closure_groundtruth = inference(dt_LES, num_steps, nt, test_data, N_les, velocity_cnn, ps_drift, _st_drift, Re, trajectory_to_evaluate, ϵ, dev; method=:heuns_method)            end
         end
         comp_time_det = @elapsed begin
-            all_deterministic = inference_deterministic(dt_LES, nt, test_data, N_les, velocity_cnn_det, ps_deterministic, _st_deterministic, Re, trajectory_to_evaluate, dev)
+            all_deterministic, closure_det = inference_deterministic(dt_LES, nt, test_data, N_les, velocity_cnn_det, ps_deterministic, _st_deterministic, Re, trajectory_to_evaluate, dev)
         end
         total_time_si += comp_time_si
         total_time_det += comp_time_det
-        # all_groundtruth_batch[:, :, :, :, i] .= all_groundtruth
-        # all_u_les_batch[:, :, :, :, i] .= all_u_les
+
+        all_groundtruth_batch[:, :, :, :, i] .= all_groundtruth
+        all_u_les_batch[:, :, :, :, i] .= all_u_les
         all_u_model_batch[:, :, :, :, i] .= all_u_model
         all_u_deterministic_batch[:, :, :, :, i] .= all_deterministic
+        closure_SI_batch[:,:,:,:,i] .= closure_SI
+        closure_groundtruth_batch[:,:,:,:,i] .= closure_groundtruth
+        closure_det_batch[:,:,:,:,i] .= closure_det
     end
-
-    # Compute and print the average times
     avg_time_si = total_time_si / batch_size
     avg_time_det = total_time_det / batch_size
-
     println("Total computation time for stochastic inference (SI): $(total_time_si) seconds")
     println("Average computation time per batch for SI: $(avg_time_si) seconds")
-
     println("Total computation time for deterministic inference: $(total_time_det) seconds")
     println("Average computation time per batch for deterministic inference: $(avg_time_det) seconds")
-
-
-    return all_groundtruth_batch, all_u_les_batch, all_u_model_batch, all_u_deterministic_batch
+    return all_groundtruth_batch, all_u_les_batch, all_u_model_batch, all_u_deterministic_batch, closure_SI_batch, closure_groundtruth_batch, closure_det_batch
 end
 
 function compute_aposteriori_error_gpu(error_matrix) 
@@ -236,6 +268,48 @@ function compute_aposteriori_error_gpu(error_matrix)
 
     aposteriori_error = cumulative_sum ./ indices  
     return aposteriori_error
+end
+
+function error_comparison_LES_model_closure(closure_groundtruth_batch, closure_SI_batch, closure_det_batch, dt_LES, save_path; dev)
+    nt = size(closure_groundtruth_batch, 4) - 1
+    batch_size = size(closure_groundtruth_batch, 5)
+    times = CUDA.collect((0:nt) .* dt_LES)
+    rrmse_model = CUDA.zeros(Float32, nt+1, batch_size)
+    for i=1:batch_size
+        y_pred = closure_SI_batch[:,:,:,:,i] |> dev;
+        y_true = closure_groundtruth_batch[:,:,:,:,1] |> dev;
+        for j=1:nt+1
+            y = y_pred[:,:,:,j] |> dev;
+            y_hat = y_true[:,:,:,j] |> dev;
+            rrmse = prior(y_hat, y; dev) |> dev;
+            CUDA.@allowscalar rrmse_model[j,i] = rrmse;
+        end
+    end
+    rrmse_model_cpu = Array(rrmse_model) 
+    median_rrmse_cpu = median(rrmse_model_cpu, dims=2)[:, 1]
+    min_rrmse_cpu = minimum(rrmse_model_cpu, dims=2)[:, 1]
+    max_rrmse_cpu = maximum(rrmse_model_cpu, dims=2)[:, 1]
+    q1_rrmse = [quantile(rrmse_model_cpu[t, :], 0.25) for t in 1:(nt+1)] 
+    q3_rrmse = [quantile(rrmse_model_cpu[t, :], 0.75) for t in 1:(nt+1)] 
+    q1_rrmse = collect(q1_rrmse)
+    q3_rrmse = collect(q3_rrmse)
+
+    rrmse_det_model = CUDA.zeros(nt+1)
+    for j=1:nt+1
+        y = closure_det_batch[:,:,:,j,1] |> dev;
+        y_hat = closure_groundtruth_batch[:,:,:,j,1] |> dev;
+        rrmse = prior(y_hat, y; dev) |> dev;
+        CUDA.@allowscalar rrmse_det_model[j] = rrmse |> dev;
+    end
+    mse_det_model_cpu = Array(rrmse_det_model)
+    times_cpu = Array(times)
+
+    p = plot(times_cpu, mse_det_model_cpu, label="Det. Model", xlabel="Time", ylabel="A-Priori", title="A-Priori Error Evolution", lw=2, color=:red, titlefontsize=14, guidefontsize=12, tickfontsize=10, legendfontsize=12)
+    plot!(times_cpu, median_rrmse_cpu, label="Median SI Model", lw=2, color=:blue)
+    plot!(times_cpu, q1_rrmse, ribbon=(q3_rrmse - q1_rrmse), fillalpha=0.3, label="IQR (Q1-Q3)", lw=0, color=:blue)
+    plot!(times_cpu, min_rrmse_cpu, ribbon=(max_rrmse_cpu - min_rrmse_cpu), fillalpha=0.2, label="Min/Max Range", lw=0, color=:grey)
+    savefig(p, save_path)
+    println("Plot with uncertainty bounds saved to: $save_path")    
 end
 
 function error_comparison_LES_model(all_groundtruth, all_u_les, all_u_model, all_u_deterministic, dt_LES, save_path; dev)
@@ -253,9 +327,7 @@ function error_comparison_LES_model(all_groundtruth, all_u_les, all_u_model, all
             CUDA.@allowscalar rrmse_model[j,i] = rrmse;
         end
     end
-    # rrmse_post = compute_aposteriori_error_gpu(rrmse_model) |> dev; 
-
-    rrmse_model_cpu = Array(rrmse_model) # Array(rrmse_post)
+    rrmse_model_cpu = Array(rrmse_model) 
     median_rrmse_cpu = median(rrmse_model_cpu, dims=2)[:, 1]
     min_rrmse_cpu = minimum(rrmse_model_cpu, dims=2)[:, 1]
     max_rrmse_cpu = maximum(rrmse_model_cpu, dims=2)[:, 1]
@@ -271,8 +343,7 @@ function error_comparison_LES_model(all_groundtruth, all_u_les, all_u_model, all
         rrmse = relative_root_mse(y_hat, y; dev) |> dev;
         CUDA.@allowscalar rrmse_no_model[j] = rrmse |> dev;
     end
-    # rrmse_no_post = compute_aposteriori_error_gpu(rrmse_no_model) |> dev; 
-    mse_les_cpu = Array(rrmse_no_model) # Array(rrmse_no_post)
+    mse_les_cpu = Array(rrmse_no_model)
 
     rrmse_det_model = CUDA.zeros(nt+1)
     for j=1:nt+1
@@ -281,11 +352,10 @@ function error_comparison_LES_model(all_groundtruth, all_u_les, all_u_model, all
         rrmse = relative_root_mse(y_hat, y; dev) |> dev;
         CUDA.@allowscalar rrmse_det_model[j] = rrmse |> dev;
     end
-    # rrmse_det_post = compute_aposteriori_error_gpu(rrmse_det_model) |> dev; 
-    mse_det_model_cpu = Array(rrmse_det_model) # Array(rrmse_det_post)
+    mse_det_model_cpu = Array(rrmse_det_model)
     times_cpu = Array(times)
 
-    p = plot(times_cpu, mse_les_cpu, label="No Model", xlabel="Time", ylabel="RMSE", lw=2, title="Error Evolution", color=:green)
+    p = plot(times_cpu, mse_les_cpu, label="No Model", xlabel="Time", ylabel="A-Posteriori", lw=2, title="A-Posteriori Error Evolution", color=:green, titlefontsize=14, guidefontsize=12, tickfontsize=10, legendfontsize=12)
     plot!(p, times_cpu, mse_det_model_cpu, label="Det. Model", lw=2, color=:red)
     plot!(times_cpu, median_rrmse_cpu, label="Median SI Model", lw=2, color=:blue)
     plot!(times_cpu, q1_rrmse, ribbon=(q3_rrmse - q1_rrmse), fillalpha=0.3, label="IQR (Q1-Q3)", lw=0, color=:blue)
@@ -356,7 +426,7 @@ function plot_total_energy_over_time(all_groundtruth::CuArray, all_u_les::CuArra
     energy_deterministic_model_cpu = Array(energy_u_deterministic[:,1])
     time_vector_cpu = Array(time_vector)
 
-    p = plot(time_vector_cpu, energy_groundtruth_cpu, label="Ground Truth", xlabel="Time", ylabel="Energy", lw=2, title="Total Energy", color=:orange)
+    p = plot(time_vector_cpu, energy_groundtruth_cpu, label="Ground Truth", xlabel="Time", ylabel="Energy", lw=2, title="Total Energy", color=:orange, titlefontsize=14, guidefontsize=12, tickfontsize=10, legendfontsize=12)
     plot!(p, time_vector_cpu, energy_deterministic_model_cpu, label="Det model", color=:red)
     plot!(p, time_vector_cpu, energy_les_cpu, label="No model", color=:green)
     plot!(time_vector_cpu, median_model_cpu, label="Median SI Model", lw=2, color=:blue)
@@ -457,7 +527,7 @@ function plot_energy_spectrums(i, dt_LES, all_groundtruth_batch, all_u_les_batch
     q1_model = collect(q1_model)
     q3_model = collect(q3_model)
 
-    energy_spectrum_plot = Plots.plot(K_bins_energy, energy_nomodel[:, 1], label="No Model", xaxis=:log, yaxis=:log, xlabel="κ", ylabel="Energy E(κ)", title="Energy Spectrum at t=$(round(t, digits=3))", color=:green)
+    energy_spectrum_plot = Plots.plot(K_bins_energy, energy_nomodel[:, 1], label="No Model", xaxis=:log, yaxis=:log, xlabel="κ", ylabel="Energy E(κ)", title="Energy Spectrum at t=$(round(t, digits=3))", color=:green, titlefontsize=14, guidefontsize=12, tickfontsize=10, legendfontsize=12, legend=:bottomleft)
     plot!(energy_spectrum_plot, K_bins_energy, energy_groundtruth[:, 1], label="Ground Truth", color=:black)
     plot!(energy_spectrum_plot, K_bins_energy, median_model_cpu, label="Median SI Model", lw=2, color=:blue)
     plot!(energy_spectrum_plot, K_bins_energy, q1_model, ribbon=(q3_model - q1_model), fillalpha=0.3, label="IQR (Q1-Q3)", lw=0, color=:blue)

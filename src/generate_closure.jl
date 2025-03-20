@@ -121,7 +121,7 @@ function step_rk4_with_closure_deterministic(u0, dt, velocity_cnn_det, ps_determ
     k4 = proj_k4[2:end-1, 2:end-1, :] |> dev;
 
     unew = u .+ (dt ./ 6) .* (k1 .+ 2k2 .+ 2k3 .+ k4) |> dev;
-    return unew
+    return unew, closure_1
 end
 
 function heuns_method(velocity_cnn, ps_drift, _st_drift, ϵ, images, drift_euler, sigma_euler, dt, t_sample_heun, cond_state, cond_closure; dev) 
@@ -129,6 +129,33 @@ function heuns_method(velocity_cnn, ps_drift, _st_drift, ϵ, images, drift_euler
     drift_heun, _st_drift = Lux.apply(velocity_cnn, (prediction_step, t_sample_heun, cond_closure, cond_state), ps_drift, _st_drift) |> dev
     sigma_heun = sigma(t_sample_heun, ϵ) |> dev 
     images = euler_maruyama(images, ((1/2) .* (drift_euler .+ drift_heun)), dt, ((1/2) .* (sigma_euler .+ sigma_heun))) 
+    return images
+end
+
+function generate_closure_SI(target_closure, initial_test, num_steps, ϵ, dev; method=:euler_maruyama)
+    cond_closure = Float32.(target_closure) |> dev
+    initial_closure = Float32.(initial_test) |> dev
+    images = Float32.(initial_test) |> dev
+    num_test_samples = size(target_closure, 4)
+    t_range = LinRange(0, 1, num_steps)
+    dt = t_range[2] - t_range[1]
+    t_sample_euler = CUDA.zeros(Float32, 1, 1, 1, num_test_samples)
+    t_sample_heun = CUDA.zeros(Float32, 1, 1, 1, num_test_samples)
+    for i in 1:num_steps-1
+        t_sample_euler .= t_range[i] |> dev
+        t_sample_heun .= t_range[i+1]
+        W_euler = sqrt(t_range[i]) .* randn(size(cond_closure)) |> dev
+        W_heun = sqrt(t_range[i+1]) .* randn(size(cond_closure)) |> dev
+        drift_euler = time_derivative_stochastic_interpolant(initial_closure, cond_closure, W_euler, t_sample_euler, ϵ) |> dev
+        sigma_value_euler = sigma(t_sample_euler, ϵ) |> dev
+        if method == :euler_maruyama
+            images = euler_maruyama(images, drift_euler, dt, sigma_value_euler) |> dev  
+        elseif method == :heuns_method
+            drift_heun = time_derivative_stochastic_interpolant(initial_closure, cond_closure, W_heun, t_sample_heun, ϵ) |> dev
+            sigma_heun = sigma(t_sample_heun, ϵ) |> dev 
+            images = euler_maruyama(images, ((1/2) .* (drift_euler .+ drift_heun)), dt, ((1/2) .* (sigma_value_euler .+ sigma_heun))) 
+        end
+    end
     return images
 end
 
@@ -147,6 +174,7 @@ function generate_closure(velocity_cnn, ps_drift, _st_drift, target_label_closur
     for i in 1:num_steps-1
         t_sample_euler .= t_range[i]
         t_sample_heun .= t_range[i+1]
+
         drift_euler, _st_drift = Lux.apply(velocity_cnn, (images, t_sample_euler, cond_closure, cond_state), ps_drift, _st_drift)
         sigma_value_euler = sigma(t_sample_euler, ϵ) |> dev
         if method == :euler_maruyama

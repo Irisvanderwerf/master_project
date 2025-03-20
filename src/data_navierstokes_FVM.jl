@@ -20,7 +20,6 @@ using IncompressibleNavierStokes
 const INS = IncompressibleNavierStokes
 using OrdinaryDiffEq
 
-using BSON
 
 z = CUDA.functional() ? CUDA.zeros : (s...) -> zeros(Float32, s...)
 ArrayType = CUDA.functional() ? CuArray : Array
@@ -369,7 +368,7 @@ function create_training_sets(c_train, v_train, N_les)
         initial_sample[:, :, :, i, :] .= c_train[N_les][:, :, :, i, :]
         target_sample[:, :, :, i, :] .= c_train[N_les][:, :, :, i + 1, :]
         target_label_closure[:, :, :, i, :] .= c_train[N_les][:, :, :, i, :]
-        target_label_state[:, :, :, i, :] .= v_train[N_les][:, :, :, i + 1, :]
+        target_label_state[:, :, :, i, :] .= v_train[N_les][:, :, :, i, :]
     end
 
     return initial_sample, target_sample, target_label_closure, target_label_state
